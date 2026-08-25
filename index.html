@@ -1,0 +1,2763 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orivox · Player Multipista</title>
+<script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@spotify/basic-pitch@1.0.1/dist/index.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<meta name="description" content="Orivox: importe as pistas da sua música, mixe no navegador e exporte seu playback. Por Raphael Silveira.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,650;1,9..144,500&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* Sala de ensaio (Caminho A) */
+  .sala-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin:0 0 14px}
+  .sala-head{display:flex;align-items:center;gap:12px}
+  .sala-ic{font-size:20px;color:var(--gold);flex-shrink:0}
+  .sala-head strong{display:block;color:var(--ink);font-size:14px}
+  .sala-sub{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+  .sala-status{margin-left:auto;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:20px;padding:3px 10px;white-space:nowrap}
+  .sala-status.on{color:var(--gold-soft);border-color:var(--gold);background:rgba(42,212,200,.08)}
+  .sala-acoes{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .sala-conectada{margin-top:12px;display:flex;flex-direction:column;gap:10px}
+  .sala-linha{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .sala-rot{font-size:12px;color:var(--muted);white-space:nowrap}
+  .sala-input{flex:1;min-width:180px;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 10px;font-family:'IBM Plex Mono',monospace;font-size:12px}
+  .sala-peers{font-size:12.5px;color:var(--gold-soft)}
+  .sala-hint{font-size:11.5px;color:var(--muted);line-height:1.5}
+  .sala-diag{margin-top:4px}
+  .sala-diag summary{font-size:11px;color:var(--muted);cursor:pointer}
+  .sala-log{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--gold-soft);background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-top:6px;max-height:160px;overflow-y:auto;white-space:pre-wrap;line-height:1.6}
+  .btn-sm{padding:7px 12px;font-size:12.5px}
+  .hidden{display:none !important}
+  :root{
+    --bg:#10141F; --panel:#181E2E; --panel-2:#1F2637; --line:#2A3247;
+    --ink:#E9ECF5; --muted:#8A93AB; --gold:#2AD4C8; --gold-soft:#7FEDE3; --amber:#E0A75E;
+    --teal:#5FC4B8; --red:#E06A6A; --green:#7BC98A;
+    --radius:14px; --radius-s:9px;
+    --font-body:'Inter',system-ui,sans-serif;
+    --font-display:'Fraunces',serif;
+    --font-mono:'IBM Plex Mono',monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg); color:var(--ink); font-family:var(--font-body);
+    min-height:100vh; font-size:15px; line-height:1.5;
+    background-image:radial-gradient(ellipse 900px 480px at 50% -120px, #1C2438 0%, transparent 60%);
+  }
+  a{color:var(--gold)}
+  .social-ic{ width:32px;height:32px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;
+    background:var(--panel-2);border:1px solid var(--line);color:var(--muted);transition:all .15s ease;text-decoration:none }
+  .social-ic:hover,.social-ic:focus-visible{ color:#fff }
+  .social-ic[aria-label*="YouTube"]:hover,.social-ic[aria-label*="YouTube"]:focus-visible{ background:#FF0000;border-color:#FF0000 }
+  .social-ic[aria-label*="SoundCloud"]:hover,.social-ic[aria-label*="SoundCloud"]:focus-visible{ background:#FF5500;border-color:#FF5500 }
+  button{font-family:inherit;cursor:pointer}
+  :focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:4px}
+  @media (prefers-reduced-motion: reduce){ *{animation:none!important;transition:none!important} }
+
+  .wrap{max-width:1080px;margin:0 auto;padding:0 20px 80px}
+
+  /* ---------- Cabeçalho ---------- */
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:26px 0 8px;flex-wrap:wrap}
+  .wordmark{font-family:var(--font-display);font-weight:650;font-size:34px;letter-spacing:.5px}
+  .wordmark .orivox-nome{color:#FFFFFF}
+  .wordmark .rs{color:var(--gold)}
+  .wordmark .vox{color:var(--amber)}
+  .tagline{color:var(--muted);font-size:13px;letter-spacing:.04em}
+  .byline{font-family:var(--font-display);font-style:italic;color:var(--muted);font-size:14px}
+  /* Nome do autor: pulsar suave dourado (respira devagar), sem cansar a vista */
+  .autor-btn{font-family:var(--font-display);font-style:italic;font-size:14px;background:none;border:none;padding:0;
+    cursor:pointer;letter-spacing:.02em;animation:respiraOuro 4.5s ease-in-out infinite;transition:color .2s ease, text-shadow .2s ease}
+  @keyframes respiraOuro{
+    0%,100%{ color:var(--muted); text-shadow:none }
+    50%{ color:var(--gold-soft); text-shadow:0 0 10px rgba(42,212,200,.35) }
+  }
+  .autor-btn:hover,.autor-btn:focus-visible{ color:var(--gold); text-shadow:0 0 14px rgba(42,212,200,.55); animation-play-state:paused }
+  .autor-btn .lupa{font-size:11px;opacity:.7;margin-left:4px;font-style:normal}
+  /* Modal Sobre */
+  .sobre-overlay{position:fixed;inset:0;background:rgba(6,9,16,.78);backdrop-filter:blur(3px);z-index:60;display:none;align-items:center;justify-content:center;padding:20px}
+  .sobre-overlay.on{display:flex}
+  .sobre-card{background:linear-gradient(180deg,var(--panel) 0%,#151A28 100%);border:1px solid var(--line);border-radius:16px;
+    max-width:620px;width:100%;max-height:86vh;overflow:auto;padding:26px 28px;box-shadow:0 24px 70px rgba(0,0,0,.55);position:relative}
+  .sobre-card h2{font-family:var(--font-display);font-weight:650;font-size:26px;color:var(--gold-soft);margin-bottom:4px}
+  .sobre-card .sub{color:var(--muted);font-size:12.5px;font-family:var(--font-mono);margin-bottom:16px}
+  .sobre-card p{font-size:14.5px;line-height:1.68;color:var(--ink);margin-bottom:12px}
+  .sobre-card .fecha{position:absolute;top:14px;right:16px;background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;line-height:1}
+  .sobre-card .fecha:hover{color:var(--gold)}
+  .sobre-links{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
+  .sobre-links a{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:9px;padding:9px 15px;
+    font-size:13px;text-decoration:none;color:var(--ink);transition:all .15s ease}
+  .sobre-links a:hover{border-color:var(--gold);color:var(--gold-soft)}
+  .autor-tip{position:absolute;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;
+    font-size:12px;color:var(--muted);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .18s ease;z-index:50;font-style:normal;font-family:var(--font-body)}
+  .autor-tip.on{opacity:1}
+
+  /* ---------- Zona de importação ---------- */
+  .dropzone{
+    margin-top:26px;border:1.5px dashed var(--line);border-radius:var(--radius);
+    background:linear-gradient(180deg,var(--panel) 0%,#151A28 100%);
+    padding:56px 28px;text-align:center;transition:border-color .2s, background .2s;
+  }
+  .dropzone.dragover{border-color:var(--gold);background:#1D2436}
+  .dropzone h2{font-family:var(--font-display);font-weight:500;font-size:26px;margin-bottom:8px}
+  .dropzone p{color:var(--muted);max-width:520px;margin:0 auto 20px}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;border:none;border-radius:var(--radius-s);
+    padding:11px 20px;font-size:14px;font-weight:600;transition:transform .12s, filter .15s;
+  }
+  .btn:active{transform:translateY(1px)}
+  .btn-gold{background:var(--gold);color:#171307}
+  .btn-gold:hover{filter:brightness(1.08)}
+  .btn-ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+  .btn-ghost:hover{border-color:var(--muted)}
+  .hint{font-size:12px;color:var(--muted);margin-top:14px}
+
+  /* ---------- Transporte ---------- */
+  .transport{
+    display:none;position:sticky;top:0;z-index:20;margin-top:22px;
+    background:rgba(24,30,46,.92);backdrop-filter:blur(8px);
+    border:1px solid var(--line);border-radius:var(--radius);
+    padding:14px 18px;
+  }
+  .transport.visible{display:block}
+  .t-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .t-btn{
+    width:46px;height:46px;border-radius:50%;border:1px solid var(--line);
+    background:var(--panel-2);color:var(--ink);font-size:17px;display:flex;align-items:center;justify-content:center;
+    transition:background .15s,border-color .15s;
+  }
+  .t-btn:hover{border-color:var(--gold)}
+  .t-btn.primary{background:var(--gold);color:#171307;border-color:var(--gold);width:56px;height:56px;font-size:20px}
+  .timecode{font-family:var(--font-mono);font-size:15px;color:var(--gold-soft);min-width:118px;text-align:center}
+  .timeline{flex:1;min-width:200px;display:flex;align-items:center}
+  input[type=range].seek{width:100%;accent-color:var(--gold);height:6px}
+  .t-master{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}
+  .t-master input[type=range]{width:110px;accent-color:var(--teal)}
+
+  /* ---------- Console (pistas) ---------- */
+  .console{display:none;margin-top:22px}
+  .console.visible{display:block}
+  .console-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+  .console-head h2{font-family:var(--font-display);font-weight:500;font-size:21px}
+  .console-head .actions{display:flex;gap:10px;flex-wrap:wrap}
+  .strips{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+  .strip{
+    background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:16px;display:flex;flex-direction:column;gap:12px;
+  }
+  .strip-top{display:flex;align-items:center;gap:10px}
+  .strip-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+  /* Ícone do instrumento: identificação visual imediata da pista */
+  .strip-ic{width:30px;height:30px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;
+    font-size:15px;flex-shrink:0;border:1px solid;line-height:1;transition:transform .15s ease}
+  .strip:hover .strip-ic{transform:scale(1.06)}
+  .strip-name{
+    flex:1;background:transparent;border:none;color:var(--ink);font-weight:600;font-size:15px;
+    border-bottom:1px dashed transparent;padding:2px 0;min-width:0;
+  }
+  .strip-name:hover,.strip-name:focus{border-bottom-color:var(--line);outline:none}
+  .strip-remove{background:none;border:none;color:var(--muted);font-size:16px;padding:4px}
+  .strip-remove:hover{color:var(--red)}
+  .meter{
+    height:12px;border-radius:4px;background:#0A0D15;overflow:hidden;position:relative;
+    border:1px solid #232B3F;
+  }
+  /* Trilho de LEDs apagados ao fundo (dá o "corpo" do medidor mesmo em silêncio) */
+  .meter::before{
+    content:'';position:absolute;inset:1px;
+    background:repeating-linear-gradient(90deg,#1B2233 0 4px,transparent 4px 6px);
+    opacity:.75;pointer-events:none;
+  }
+  .meter-fill{
+    height:100%;width:0%;position:relative;z-index:1;
+    /* verde no corpo, amarelo perto do limite, vermelho no estouro: leitura
+       funcional do nível, não só decoração */
+    background:linear-gradient(90deg,#3FD48A 0%,#8FD86A 55%,#E8C34A 80%,var(--red) 97%);
+    /* recorta em segmentos de LED */
+    -webkit-mask-image:repeating-linear-gradient(90deg,#000 0 4px,transparent 4px 6px);
+    mask-image:repeating-linear-gradient(90deg,#000 0 4px,transparent 4px 6px);
+    transition:width .06s linear;
+  }
+  .wave{width:100%;height:56px;display:block;border-radius:8px;background:#0C0F18;border:1px solid #232B3F;cursor:pointer}
+  .pan{width:64px;accent-color:var(--teal)}
+  .pan-lbl{font-size:10px;color:var(--muted)}
+  .loop-info{font-family:var(--font-mono);font-size:12px;color:var(--gold-soft)}
+  .strip-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .vol{flex:1;accent-color:var(--gold)}
+  .vol-val{font-family:var(--font-mono);font-size:12px;color:var(--muted);width:40px;text-align:right}
+  .strip-btns{display:flex;gap:8px;flex-wrap:wrap}
+  .chip-midi{border:1px solid var(--teal);color:var(--teal)}
+  .chip-midi:hover{background:var(--teal);color:#0C0F18}
+  .conv-panel{display:none;margin-top:12px;padding:14px;background:#0C0F18;border:1px solid var(--line);border-radius:10px}
+  .conv-panel.open{display:block}
+  .conv-row{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:10px}
+  .conv-row .field{min-width:120px}
+  .conv-row label{display:block;font-size:11px;color:var(--muted);margin-bottom:4px}
+  .conv-row select,.conv-row input[type=range]{width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 8px;font-size:13px}
+  .conv-prog{height:8px;background:#0C0F18;border:1px solid #232B3F;border-radius:5px;overflow:hidden;margin:8px 0}
+  .conv-prog-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--teal),var(--gold));transition:width .2s}
+  .conv-note{font-size:11px;color:var(--muted);margin-top:6px}
+  .chip{
+    border:1px solid var(--line);background:var(--panel-2);color:var(--muted);
+    border-radius:7px;padding:5px 12px;font-size:12px;font-weight:600;letter-spacing:.05em;
+    transition:all .15s;
+  }
+  .chip.mute-on{background:var(--red);border-color:var(--red);color:#fff}
+  .chip.solo-on{background:var(--gold);border-color:var(--gold);color:#171307}
+  .strip-dur{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-left:auto}
+
+  /* ---------- Metrônomo Inteligente ---------- */
+  .metro{display:none;margin-top:14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px}
+  .metro.visible{display:block}
+  .metro h3{font-family:var(--font-display);font-weight:500;font-size:16px;color:var(--gold-soft);margin-bottom:4px}
+  .metro p{color:var(--muted);font-size:12.5px;margin-bottom:10px}
+  .metro-row{display:flex;gap:12px;flex-wrap:wrap;align-items:end}
+  .metro-row .field label{display:block;font-size:11px;color:var(--muted);margin-bottom:4px;letter-spacing:.03em}
+  .metro-row input,.metro-row select{background:var(--panel-2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:8px 9px;font-size:13px;font-family:inherit}
+  .metro-row input[type=range]{padding:0;accent-color:var(--gold);width:110px}
+  .tapbtn{border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600}
+  .tapbtn:hover{border-color:var(--gold)}
+
+  /* ---------- Acordes ---------- */
+  .chords{display:none;margin-top:14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px}
+  .chords.visible{display:block}
+  .chords h3{font-family:var(--font-display);font-weight:500;font-size:16px;color:var(--gold-soft);margin-bottom:4px}
+  .chords p{color:var(--muted);font-size:12.5px;margin-bottom:10px}
+  .chord-now{font-family:var(--font-display);font-size:56px;font-weight:650;color:var(--gold);min-height:70px;text-align:center;letter-spacing:1px}
+  .chord-grid{font-family:var(--font-mono);font-size:13px;color:var(--ink);background:#0C0F18;border:1px solid #232B3F;border-radius:8px;padding:12px;line-height:2;white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto}
+  /* Faixa visual de acordes com playhead (para seguir tocando) */
+  .chord-lane-wrap{position:relative;margin:14px 0 6px;background:#0C0F18;border:1px solid #232B3F;border-radius:10px;padding:0;overflow:hidden;display:none}
+  .chord-lane-wrap.on{display:block}
+  .chord-lane{position:relative;display:flex;gap:8px;padding:18px 50%;transition:transform .18s linear;will-change:transform}
+  .chord-card{flex:0 0 auto;min-width:70px;padding:14px 18px;border-radius:10px;background:var(--panel-2);border:1px solid var(--line);
+    font-family:var(--font-display);font-weight:650;font-size:26px;color:var(--muted);text-align:center;transition:all .18s ease;position:relative}
+  .chord-card .sub{display:block;font-family:var(--font-mono);font-size:10px;color:#5C6884;margin-top:2px;font-weight:400}
+  .chord-card.active{background:linear-gradient(180deg,#2A3247,#1F2637);border-color:var(--gold);color:var(--gold);
+    font-size:30px;box-shadow:0 0 22px rgba(42,212,200,.25);transform:translateY(-2px)}
+  .chord-card.past{opacity:.4}
+  .chord-playhead{position:absolute;top:0;bottom:0;left:50%;width:2px;background:var(--gold);box-shadow:0 0 10px var(--gold);pointer-events:none;z-index:3}
+  .chord-lane-hint{text-align:center;color:var(--muted);font-size:11.5px;padding:0 0 10px}
+
+  /* ---------- Cartão de separação ---------- */
+  .sep-card{
+    display:none;margin-bottom:14px;border:1px solid var(--gold);border-radius:var(--radius);
+    background:linear-gradient(180deg,#231F12 0%,#1C1A12 100%);padding:18px 20px;
+  }
+  .sep-card.visible{display:block}
+  .sep-card h3{font-family:var(--font-display);font-weight:500;font-size:17px;color:var(--gold-soft);margin-bottom:6px}
+  .sep-card p{color:var(--ink);font-size:13.5px;margin-bottom:10px}
+  .sep-card ol{margin:0 0 12px 20px;color:var(--ink);font-size:13.5px}
+  .sep-card ol li{margin-bottom:5px}
+  .sep-card .mono{font-family:var(--font-mono);font-size:12.5px;color:var(--gold-soft)}
+  .sep-dismiss{background:none;border:none;color:var(--muted);font-size:12px;text-decoration:underline;padding:0}
+  .sep-dismiss:hover{color:var(--ink)}
+
+  /* ---------- Exportação ---------- */
+  .exporter{
+    margin-top:26px;background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--radius);padding:20px;display:none;
+  }
+  .exporter.visible{display:block}
+  .exporter h3{font-family:var(--font-display);font-weight:500;font-size:18px;margin-bottom:6px}
+  .exporter p{color:var(--muted);font-size:13px;margin-bottom:14px}
+  .export-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .status{font-size:13px;color:var(--teal);min-height:18px;margin-top:10px;font-family:var(--font-mono)}
+
+  /* ---------- Rodapé / vazio ---------- */
+  .empty-note{margin-top:36px;text-align:center;color:var(--muted);font-size:13px}
+  footer{margin-top:56px;text-align:center;color:var(--muted);font-size:12px;letter-spacing:.03em}
+  footer .fm{font-family:var(--font-display);font-style:italic}
+
+  @media (max-width:560px){
+    .wordmark{font-size:27px}
+    .t-btn{width:42px;height:42px}
+    .t-btn.primary{width:50px;height:50px}
+    .timecode{min-width:100px;font-size:13px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <div class="wordmark-wrap" style="display:flex;align-items:center;gap:12px">
+        <svg viewBox="0 0 100 100" aria-hidden="true" style="width:44px;height:44px;display:block;flex:0 0 44px">
+          <circle cx="50" cy="50" r="46" fill="none" stroke="#D88A3A" stroke-width="1.5" opacity="0.55"/>
+          <g stroke="#E2A356" stroke-width="4.2" stroke-linecap="round">
+            <line x1="30" y1="58" x2="30" y2="42"/>
+            <line x1="38" y1="64" x2="38" y2="36"/>
+            <line x1="46" y1="70" x2="46" y2="30"/>
+            <line x1="54" y1="66" x2="54" y2="34"/>
+            <line x1="62" y1="72" x2="62" y2="28"/>
+            <line x1="70" y1="60" x2="70" y2="40"/>
+          </g>
+        </svg>
+        <div class="wordmark"><span class="orivox-nome">Orivox</span></div>
+      </div>
+      <div class="tagline">Player multipista · suas músicas, suas pistas, seu mix
+        <button id="reabrirBoasVindas" title="Rever a apresentação do Orivox" aria-label="Rever a apresentação do Orivox" style="background:none;border:1px solid var(--line);border-radius:50%;width:18px;height:18px;color:var(--muted);font-size:11px;line-height:1;cursor:pointer;margin-left:6px;vertical-align:middle;padding:0">ⓘ</button>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+      <button class="autor-btn" id="autorBtn" aria-haspopup="dialog" title="Conheça o autor">Raphael Silveira<span class="lupa">&#9662;</span></button>
+      <div class="autor-tip" id="autorTip">Conheça o compositor por trás do Orivox</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end">
+        <a href="composicoes.html?fonte=youtube" class="social-ic" aria-label="Ouça as composições no YouTube" title="Ouça no YouTube">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8zM9.6 15.6V8.4l6.2 3.6-6.2 3.6z"/></svg>
+        </a>
+        <a href="composicoes.html?fonte=soundcloud" class="social-ic" aria-label="Ouça as composições no SoundCloud" title="Ouça no SoundCloud">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M1.2 12.5c-.1 0-.1.1-.1.2l-.2 1.7.2 1.6c0 .1.1.2.1.2.1 0 .1-.1.2-.2l.2-1.6-.2-1.7c0-.1-.1-.2-.2-.2zm1.3-1.2c-.1 0-.2.1-.2.2l-.2 2.9.2 2.8c0 .1.1.2.2.2s.1-.1.2-.2l.3-2.8-.3-2.9c0-.1-.1-.2-.2-.2zm10.8-3c-.4 0-.8.1-1.2.3-.2-2.6-2.4-4.6-5-4.6-.7 0-1.3.1-1.8.4-.2.1-.3.2-.3.4v10.1c0 .2.1.3.3.3h8c1.6 0 2.9-1.3 2.9-2.9s-1.3-2.9-2.9-2.9zM4.9 9.9c-.1 0-.2.1-.2.2L4.5 14l.2 2.6c0 .1.1.2.2.2s.2-.1.2-.2l.2-2.6-.2-3.9c0-.1-.1-.2-.2-.2zm1.4-.6c-.1 0-.2.1-.2.2L5.8 14l.3 2.5c0 .1.1.2.2.2s.2-.1.2-.2l.3-2.5-.3-4.5c0-.1-.1-.2-.2-.2zm1.4-.2c-.1 0-.2.1-.2.3L7.2 14l.3 2.5c0 .1.1.3.2.3.1 0 .2-.1.2-.3l.3-2.5-.3-4.6c0-.2-.1-.3-.2-.3z"/></svg>
+        </a>
+        <span style="width:1px;height:22px;background:var(--line);display:inline-block"></span>
+        <a href="partitura.html" style="font-size:13px;text-decoration:none;border:1px solid var(--gold);border-radius:8px;padding:7px 14px;color:var(--gold-soft)">♪ Partitura (novo)</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Importação -->
+  <section class="dropzone" id="dropzone" aria-label="Área de importação de pistas">
+    <h2>Traga suas pistas para cá</h2>
+    <p>Arraste os arquivos de áudio da sua música (voz, violão, bateria, baixo...) ou selecione no botão abaixo. Tudo é processado aqui no seu navegador: nada é enviado para servidor algum.</p>
+    <button class="btn btn-gold" id="pickBtn">Selecionar arquivos de áudio</button>
+    <input type="file" id="fileInput" accept="audio/*" multiple hidden>
+    <div class="hint">Formatos aceitos: MP3, WAV, OGG, M4A e outros que seu navegador reproduza. Você pode adicionar mais pistas depois.</div>
+  </section>
+
+  <!-- Sala de Ensaio (Caminho A): controle compartilhado via WebRTC, sem servidor -->
+  <section class="sala-card" id="salaCard" aria-label="Sala de ensaio compartilhada">
+    <div class="sala-head">
+      <span class="sala-ic" aria-hidden="true">&#128225;</span>
+      <div>
+        <strong>Sala de ensaio</strong>
+        <span class="sala-sub">Compartilhe o controle do mix com outros músicos, pelo link. O áudio nunca sai do seu aparelho.</span>
+      </div>
+      <span class="sala-status" id="salaStatus">desligada</span>
+    </div>
+    <div class="sala-acoes" id="salaAcoes">
+      <button class="btn btn-ghost btn-sm" id="salaCriar">Criar sala</button>
+      <button class="btn btn-ghost btn-sm" id="salaEntrarBtn">Entrar por código</button>
+    </div>
+    <div class="sala-conectada hidden" id="salaConectada">
+      <div class="sala-linha">
+        <span class="sala-rot">Link da sala:</span>
+        <input type="text" id="salaLink" readonly class="sala-input">
+        <button class="btn btn-ghost btn-sm" id="salaCopiar">Copiar</button>
+      </div>
+      <div class="sala-linha">
+        <span class="sala-peers" id="salaPeers">Você (anfitrião)</span>
+        <span class="spacer"></span>
+        <button class="btn btn-ghost btn-sm" id="salaSair">Sair da sala</button>
+      </div>
+      <div class="sala-hint" id="salaHint">Todos precisam importar a MESMA música. Os comandos (play, volume, mudo, solo) são compartilhados.</div>
+      <details class="sala-diag">
+        <summary>Diagnóstico da conexão</summary>
+        <pre id="salaLog" class="sala-log">aguardando...</pre>
+      </details>
+    </div>
+  </section>
+
+  <!-- Transporte -->
+  <section class="transport" id="transport" aria-label="Controles de reprodução">
+    <div class="t-row">
+      <button class="t-btn" id="stopBtn" title="Voltar ao início" aria-label="Parar">■</button>
+      <button class="t-btn primary" id="playBtn" title="Reproduzir / pausar" aria-label="Reproduzir ou pausar">▶</button>
+      <div class="timecode" id="timecode">00:00.0 / 00:00.0</div>
+      <div class="timeline">
+        <input type="range" class="seek" id="seek" min="0" max="1000" value="0" step="1" aria-label="Posição na música">
+      </div>
+      <div class="t-master">
+        <span>Geral</span>
+        <input type="range" id="masterVol" min="0" max="100" value="90" aria-label="Volume geral">
+      </div>
+    </div>
+    <div class="t-row" style="margin-top:10px">
+      <span style="font-size:12px;color:var(--muted)">Loop de ensaio:</span>
+      <button class="chip" id="loopA" title="Marcar o início do trecho na posição atual">Marcar A</button>
+      <button class="chip" id="loopB" title="Marcar o fim do trecho na posição atual">Marcar B</button>
+      <button class="chip" id="loopToggle" title="Repetir o trecho A-B em círculo">Loop: desligado</button>
+      <button class="chip" id="loopClear" title="Apagar as marcas">Limpar</button>
+      <span class="loop-info" id="loopInfo"></span>
+    </div>
+  </section>
+
+  <!-- Metrônomo Inteligente -->
+  <section class="metro" id="metro" aria-label="Metrônomo">
+    <h3>🕒 Metrônomo Inteligente</h3>
+    <p>Uma pista de clique com bips iguais (sem acento), tocada junto das suas pistas e incluída no WAV exportado quando ligada. <span id="mAutoInfo" style="color:var(--gold-soft)">O BPM e o 1º tempo são detectados da primeira pista importada.</span></p>
+    <div class="metro-row">
+      <div class="field"><label for="mMode">Modo</label>
+        <select id="mMode">
+          <option value="off" selected>Desligado</option>
+          <option value="count">Pré-contagem (1 compasso antes de começar)</option>
+          <option value="full">Pré-contagem + clique na música inteira</option>
+        </select>
+      </div>
+      <div class="field"><label for="mTrackMode">Andamento</label>
+        <select id="mTrackMode" title="Automático decide sozinho. Grade fixa trava o BPM (músicas gravadas com click). Seguir a música acompanha variações (bandas ao vivo).">
+          <option value="auto" selected>Automático</option>
+          <option value="grid">Grade fixa (travar BPM)</option>
+          <option value="follow">Seguir a música (acompanhar)</option>
+        </select>
+      </div>
+      <div class="field"><label for="mBpm">BPM</label><input id="mBpm" type="number" min="30" max="240" step="0.1" value="100" style="width:84px"></div>
+      <button class="tapbtn" id="mHalf" title="Se o click está batendo o dobro do necessário, corrija pela metade">÷2</button>
+      <button class="tapbtn" id="mDouble" title="Se o click está batendo pela metade, corrija para o dobro">×2</button>
+      <button class="tapbtn" id="mTap" title="Toque no ritmo da música">TAP</button>
+      <button class="tapbtn" id="mDown1" title="Com a música tocando, toque UMA vez no tempo 1 do compasso para alinhar a grade do clique">Marcar tempo 1</button>
+      <button class="tapbtn" id="mMapBtn" title="Importar o mapa de batidas gerado pelo Separador (Colab), para precisão máxima em músicas sem bateria ou com andamento variável">Importar mapa de batidas</button>
+      <input type="file" id="mMapFile" accept=".json,application/json" hidden>
+      <div class="field"><label for="mCount">Compassos de contagem</label>
+        <select id="mCount" title="Quantos compassos de pré-contagem antes da música. 1 compasso conta uma vez (ex: 1-2-3-4); 2 compassos conta duas vezes. A música entra logo após a contagem.">
+          <option value="1" selected>1 compasso</option>
+          <option value="2">2 compassos</option>
+        </select>
+      </div>
+      <div class="field"><label for="mCountStyle">Entrada da música</label>
+        <select id="mCountStyle" title="Alinhar entrada: a música toca INTEIRA e sua cabeça (dedilhado, virada, anacruse) soa durante o fim da contagem, de modo que o 1º tempo real caia exatamente onde a contagem termina. É o certo para tocar ao vivo com músicos. Emendar: a música começa direto no 1º tempo detectado (corta a cabeça).">
+          <option value="zero" selected>Alinhar entrada (toca inteira)</option>
+          <option value="emenda">Emendar no 1º tempo (corta a cabeça)</option>
+        </select>
+      </div>
+      <div class="field"><label for="mCountSub">Contagem</label>
+        <select id="mCountSub" title="Simples: um bip por tempo (1-2-3-4). Com subdivisões: acrescenta o 'e' entre os tempos (1 e 2 e 3 e 4), o tempo soa grave e o 'e' soa agudo, ajudando a sentir a divisão antes de entrar.">
+          <option value="off" selected>Simples (1 - 2 - 3 - 4)</option>
+          <option value="on">Com subdivisões (1 e 2 e 3 e 4)</option>
+        </select>
+      </div>
+      <div class="field"><label for="mMeter">Compasso</label>
+        <select id="mMeter"><option value="4/4" selected>4/4</option><option value="3/4">3/4</option><option value="2/4">2/4</option><option value="6/8">6/8</option></select>
+      </div>
+      <div class="field"><label for="mPhase">1º tempo detectado (s)</label><input id="mPhase" type="number" min="0" step="0.01" value="0" style="width:92px" title="Instante em que cai o primeiro tempo forte. Detectado automaticamente; ajuste fino se o clique não casar."></div>
+      <div class="field"><label for="mVol">Volume do clique</label><input id="mVol" type="range" min="0" max="100" value="60"></div>
+      <div class="field"><label for="mPan">Direção do clique (L/R)</label><input id="mPan" type="range" min="-100" max="100" value="0" title="Joga o clique para a esquerda ou direita, independente da música. Não afeta a transcrição nem o MIDI."><div class="pan-lbl" id="mPanLbl" style="text-align:center">Centro</div></div>
+    </div>
+  </section>
+
+  <!-- Acordes -->
+  <section class="chords" id="chords" aria-label="Acordes">
+    <h3>🎸 Acordes (beta)</h3>
+    <p>Detecta a progressão harmônica da música, sincronizada às batidas. Funciona melhor com a música completa ou com as pistas harmônicas (violão, teclado) audíveis. Durante o play, o acorde do momento aparece em destaque.</p>
+    <button class="btn btn-gold" id="chordBtn">Detectar acordes desta música</button>
+    <span class="status" id="chordStatus" style="margin-left:10px"></span>
+    <div class="chord-now" id="chordNow"></div>
+    <div class="chord-lane-wrap" id="chordLaneWrap">
+      <div class="chord-playhead"></div>
+      <div class="chord-lane" id="chordLane"></div>
+    </div>
+    <div class="chord-lane-hint" id="chordLaneHint" style="display:none">Dê o play: o acorde atual fica em destaque e a faixa desliza mostrando o que vem.</div>
+    <div class="chord-grid" id="chordGrid" style="display:none"></div>
+    <div style="margin-top:10px;display:none" id="chordActions">
+      <button class="btn btn-ghost btn-sm" id="chordCopy">Copiar cifras (uma por compasso, formato do módulo Partitura)</button>
+    </div>
+  </section>
+
+  <!-- Console -->
+  <section class="console" id="console" aria-label="Pistas carregadas">
+    <div class="console-head">
+      <h2>Console de pistas</h2>
+      <div class="actions">
+        <button class="btn btn-ghost" id="addMoreBtn">Adicionar pistas</button>
+      </div>
+    </div>
+    <div class="sep-card" id="sepCard">
+      <h3>Importou a música completa? Separe as pistas de graça</h3>
+      <p>Percebi que há uma única pista carregada. Para ter voz, bateria, baixo e instrumentos em pistas individuais (como no Moises), use o separador gratuito que acompanha o Orivox:</p>
+      <ol>
+        <li>Acesse <a href="https://colab.research.google.com/" target="_blank" rel="noopener" class="mono">colab.research.google.com</a>, clique em <strong>Upload</strong> e envie o arquivo <span class="mono">Orivox_Separador_de_Pistas.ipynb</span></li>
+        <li>Siga o passo a passo do caderno (enviar a música, rodar as células) e baixe o ZIP com as pistas separadas</li>
+        <li>Volte aqui, remova a pista única e importe as pistas do ZIP: o console monta sua mesa de som completa</li>
+      </ol>
+      <p>Alternativa no computador: o programa gratuito <a href="https://ultimatevocalremover.com/" target="_blank" rel="noopener"><strong>UVR (Ultimate Vocal Remover)</strong></a> faz a mesma separação com excelente qualidade, sem internet.</p>
+      <button class="sep-dismiss" id="sepDismiss">Entendi, não mostrar de novo nesta sessão</button>
+    </div>
+    <div class="strips" id="strips"></div>
+  </section>
+
+  <!-- Exportação -->
+  <section class="exporter" id="exporter">
+    <h3>Exportar meu mix</h3>
+    <p>O arquivo sai exatamente como você está ouvindo: pistas mudas ficam de fora e os volumes são respeitados. Quer o playback sem a voz? Silencie a pista da voz e exporte.</p>
+    <div class="export-row" style="margin-bottom:12px">
+      <div class="field" style="min-width:150px">
+        <label for="expFormat" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px">Formato</label>
+        <select id="expFormat" style="width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:9px 10px;font-size:14px">
+          <option value="wav">WAV (sem perdas)</option>
+          <option value="mp3">MP3 (compacto)</option>
+          <option value="midi">MIDI (.mid, notas para DAW)</option>
+        </select>
+      </div>
+      <div class="field" style="min-width:200px">
+        <label for="expQuality" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px">Qualidade</label>
+        <select id="expQuality" style="width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:9px 10px;font-size:14px"></select>
+      </div>
+    </div>
+    <div class="export-row">
+      <button class="btn btn-gold" id="exportWav">Baixar meu mix</button>
+      <span class="status" id="expSize" style="color:var(--muted);font-size:12px"></span>
+    </div>
+    <div class="status" id="exportStatus" role="status"></div>
+  </section>
+
+  <p class="empty-note" id="emptyNote">Dica: se sua música ainda está num arquivo único, separe as pistas gratuitamente com o caderno Orivox Separador (<a href="https://colab.research.google.com/" target="_blank" rel="noopener">Google Colab</a>) ou com o programa <a href="https://ultimatevocalremover.com/" target="_blank" rel="noopener">UVR</a>, e importe os resultados aqui.</p>
+
+  <footer>
+    <span class="fm">Orivox</span> · v1.0 · Desenvolvido por Raphael Silveira</footer>
+</div>
+
+<div class="sobre-overlay" id="boasVindasOverlay" role="dialog" aria-modal="true" aria-labelledby="boasVindasTitulo">
+  <div class="sobre-card">
+    <button class="fecha" id="boasVindasFechar" aria-label="Fechar">&times;</button>
+    <h2 id="boasVindasTitulo">Bem-vindo ao Orivox</h2>
+    <p>Separe pistas, mixe tudo aqui no navegador, transcreva pra partitura com IA e edite como quiser. O metrônomo é inteligente e se adapta ao andamento real da música. Nada sai do seu computador, e é gratuito.</p>
+    <div class="sobre-links">
+      <button class="btn btn-gold" id="boasVindasEntendi" style="border:none">Entendi</button>
+    </div>
+  </div>
+</div>
+
+<div class="sobre-overlay" id="sobreOverlay" role="dialog" aria-modal="true" aria-labelledby="sobreTitulo">
+  <div class="sobre-card">
+    <button class="fecha" id="sobreFechar" aria-label="Fechar">&times;</button>
+    <h2 id="sobreTitulo">Raphael Silveira</h2>
+    <div class="sub">Músico, compositor, produtor e arranjador</div>
+    <p>Raphael Silveira é um músico, compositor, produtor e arranjador movido pela convergência entre a fé cristã e a excelência musical. Com uma trajetória marcada pela versatilidade, atuando também como baterista, Raphael dedica seu dom à criação de sonoridades que unem a profundidade da adoração com uma vasta paleta estética, transitando entre o Soul, R&amp;B, Funk, Jazz e os mais variados gêneros musicais.</p>
+    <p>O centro de sua produção atual é o projeto <strong style="color:var(--gold-soft)">"Canções do Altar"</strong>, uma coleção de obras onde a essência da adoração encontra um refinamento técnico apurado. Cada arranjo é desenvolvido para traduzir a mensagem da letra em uma experiência sonora contemporânea, mantendo sempre a autenticidade e o sentimento que definem a sua assinatura artística.</p>
+    <p>Mais do que um produtor, Raphael se define como um homem temente a Deus, pai e marido, que enxerga na música um veículo de esperança e conexão espiritual. Seja no estúdio ou através de suas plataformas digitais, ele convida o ouvinte a vivenciar o evangelho de uma forma criativa, envolvente e profundamente humana.</p>
+    <div class="sobre-links">
+      <a href="composicoes.html?fonte=youtube">Ouvir as Canções do Altar</a>
+      <a href="composicoes.html?fonte=soundcloud">Ouvir no SoundCloud</a>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  /* ---------------- Estado ---------------- */
+  const state = {
+    ctx: null,
+    master: null,
+    tracks: [],          // {id,name,buffer,volume,muted,solo,color, node?, gain?, analyser?, el:{}}
+    playing: false,
+    offset: 0,           // segundos já percorridos
+    startedAt: 0,        // ctx.currentTime no play
+    duration: 0,
+    seeking: false,
+    offsetSoando: undefined,
+    loopA: null, loopB: null, loopOn: false,
+    sepDismissed: false,
+    raf: null,
+    nextId: 1
+  };
+  const COLORS = ['#2AD4C8','#5FC4B8','#8FA7E8','#D98CC0','#7BC98A','#E09A6A','#B49CE8','#6ABBE0'];
+  // Identidade por INSTRUMENTO: cor e ícone reconhecidos pelo nome do arquivo.
+  // Bater o olho e saber qual pista é qual, sem precisar ler o nome.
+  const INSTRUMENTOS = [
+    { re:/(coro|backing|back.?vocal|vocais)/i,       cor:'#A78BE8', icone:'\uD83C\uDFA4', rot:'Coro' },
+    { re:/(voz|vocal|voice|lead|canto)/i,            cor:'#5AA9E6', icone:'\uD83C\uDFA4', rot:'Voz' },
+    { re:/(viol[aã]o|guitarra|guitar|ac[uú]stic)/i,  cor:'#E8A33D', icone:'\uD83C\uDFB8', rot:'Violão' },
+    { re:/(bateria|drum|perc|caixa|bumbo)/i,         cor:'#6BB6E8', icone:'\uD83E\uDD41', rot:'Bateria' },
+    { re:/(baixo|bass)/i,                            cor:'#4FC3A1', icone:'\uD83C\uDFB8', rot:'Baixo' },
+    { re:/(teclado|piano|keys|key|sintet|synth)/i,   cor:'#E86AA6', icone:'\uD83C\uDFB9', rot:'Teclado' },
+    { re:/(sopro|sax|trompete|metais|brass|flauta)/i,cor:'#C9A227', icone:'\uD83C\uDFB7', rot:'Sopro' },
+    { re:/(instrumental|outros|other|mix)/i,         cor:'#8A93AB', icone:'\uD83C\uDFB6', rot:'Outros' },
+  ];
+  function identificarInstrumento(nome){
+    for(const ins of INSTRUMENTOS){ if(ins.re.test(nome||'')) return ins; }
+    return null;
+  }
+  const METRO = {gain:null, nodes:[], detected:false, travado:false, beats:null, strengths:null, lows:null, down:{}};
+
+  /* ---------------- Elementos ---------------- */
+  const $ = id => document.getElementById(id);
+  const dropzone=$('dropzone'), fileInput=$('fileInput'), pickBtn=$('pickBtn'),
+        transport=$('transport'), consoleEl=$('console'), stripsEl=$('strips'),
+        playBtn=$('playBtn'), stopBtn=$('stopBtn'), seek=$('seek'),
+        timecode=$('timecode'), masterVol=$('masterVol'), addMoreBtn=$('addMoreBtn'),
+        exporter=$('exporter'), exportWav=$('exportWav'), exportStatus=$('exportStatus'),
+        expFormat=$('expFormat'), expQuality=$('expQuality'), expSize=$('expSize'),
+        chordsEl=$('chords'), chordBtn=$('chordBtn'), chordStatus=$('chordStatus'), chordNow=$('chordNow'), chordGrid=$('chordGrid'), chordActions=$('chordActions'), chordCopy=$('chordCopy'), chordLane=$('chordLane'), chordLaneWrap=$('chordLaneWrap'), chordLaneHint=$('chordLaneHint'),
+        metroEl=$('metro'), mMode=$('mMode'), mBpm=$('mBpm'), mMeter=$('mMeter'), mVol=$('mVol'), mPan=$('mPan'), mTap=$('mTap'), mPhase=$('mPhase'), mCount=$('mCount'), mCountStyle=$('mCountStyle'), mCountSub=$('mCountSub'), mTrackMode=$('mTrackMode'),
+        sepCard=$('sepCard'), sepDismiss=$('sepDismiss'),
+        emptyNote=$('emptyNote');
+
+  /* ---------------- Áudio base ---------------- */
+  function ensureCtx(){
+    if(!state.ctx){
+      state.ctx = new (window.AudioContext||window.webkitAudioContext)();
+      state.master = state.ctx.createGain();
+      state.master.gain.value = masterVol.value/100;
+      state.master.connect(state.ctx.destination);
+    }
+    if(state.ctx.state==='suspended') state.ctx.resume();
+    return state.ctx;
+  }
+
+  /* ---------------- Importação ---------------- */
+  pickBtn.addEventListener('click', ()=> fileInput.click());
+  addMoreBtn.addEventListener('click', ()=> fileInput.click());
+  fileInput.addEventListener('change', e=>{ loadFiles(e.target.files); fileInput.value=''; });
+
+  ;['dragover','dragenter'].forEach(ev=> dropzone.addEventListener(ev, e=>{
+    e.preventDefault(); dropzone.classList.add('dragover');
+  }));
+  ;['dragleave','drop'].forEach(ev=> dropzone.addEventListener(ev, e=>{
+    e.preventDefault(); dropzone.classList.remove('dragover');
+  }));
+  dropzone.addEventListener('drop', e=> loadFiles(e.dataTransfer.files));
+
+  async function loadFiles(fileList){
+    const files = Array.from(fileList||[]).filter(f=> f.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(f.name));
+    if(!files.length) return;
+    ensureCtx();
+    dropzone.querySelector('h2').textContent = 'Carregando pistas...';
+    for(const f of files){
+      try{
+        const buf = await f.arrayBuffer();
+        const audio = await state.ctx.decodeAudioData(buf);
+        addTrack(cleanName(f.name), audio);
+      }catch(err){
+        alert('Não consegui ler "'+f.name+'". O arquivo pode estar corrompido ou num formato que este navegador não decodifica.');
+      }
+    }
+    dropzone.querySelector('h2').textContent = 'Traga suas pistas para cá';
+    refreshLayout();
+  }
+
+  function cleanName(n){
+    return n.replace(/\.[^.]+$/,'').replace(/[_-]+/g,' ').trim();
+  }
+
+
+  // ====== Re-ancoragem automática de fase (onset mel + DP de Ellis) ======
+  // Portado e validado contra 6 músicas reais: erro de fase caiu de 144-274ms
+  // para 0-23ms (nivel Moises). 100% client-side, leve (< 1s para 4min de audio).
+  function bancoMel(sr, N, nmels){
+    const nb=N/2+1;
+    const hz2mel=(f)=>2595*Math.log10(1+f/700);
+    const mel2hz=(m)=>700*(Math.pow(10,m/2595)-1);
+    const lo=hz2mel(0), hi=hz2mel(sr/2);
+    const pts=new Float32Array(nmels+2);
+    for(let i=0;i<nmels+2;i++) pts[i]=mel2hz(lo+(hi-lo)*i/(nmels+1));
+    const bins=new Int32Array(nmels+2);
+    for(let i=0;i<nmels+2;i++) bins[i]=Math.floor((N+1)*pts[i]/sr);
+    // matriz esparsa como lista de {mel, bin, peso}
+    const fb=[];
+    for(let m=1;m<=nmels;m++){
+      for(let k=bins[m-1];k<bins[m];k++){ if(bins[m]>bins[m-1] && k<nb) fb.push([m-1,k,(k-bins[m-1])/(bins[m]-bins[m-1])]); }
+      for(let k=bins[m];k<bins[m+1];k++){ if(bins[m+1]>bins[m] && k<nb) fb.push([m-1,k,(bins[m+1]-k)/(bins[m+1]-bins[m])]); }
+    }
+    return fb;
+  }
+  // onset mel: recebe a magnitude por frame (mag[frame] = Float32Array de N/2+1)
+  // e devolve a curva de novidade (fluxo positivo no dominio mel-log).
+  function onsetMel(magPow, nF, nb, fb, nmels){
+    const odf=new Float32Array(nF);
+    let prev=new Float32Array(nmels);
+    const mel=new Float32Array(nmels);
+    for(let f=0; f<nF; f++){
+      mel.fill(0);
+      const sp=magPow[f];
+      for(let e=0;e<fb.length;e++){ const t=fb[e]; mel[t[0]]+=t[2]*sp[t[1]]; }
+      let flux=0;
+      for(let m=0;m<nmels;m++){ const v=Math.log(1+mel[m]); const d=v-prev[m]; if(d>0) flux+=d; prev[m]=v; }
+      odf[f]=flux;
+    }
+    // normaliza
+    let mx=0; for(let i=0;i<nF;i++) if(odf[i]>mx) mx=odf[i];
+    if(mx>0) for(let i=0;i<nF;i++) odf[i]/=mx;
+    return odf;
+  }
+  // DP de Ellis: encontra as batidas que maximizam (forca do onset - desvio do periodo).
+  // Re-ancora sozinho: cada batida busca a melhor posicao ~1 periodo atras.
+  function beatTrackDP(odf, hopS, bpm, tightness){
+    tightness=tightness||100;
+    const period=(60/bpm)/hopS;   // periodo em frames
+    const Nn=odf.length;
+    const cumscore=new Float32Array(Nn);
+    const backlink=new Int32Array(Nn).fill(-1);
+    for(let i=0;i<Nn;i++) cumscore[i]=odf[i];
+    for(let i=0;i<Nn;i++){
+      const lo=Math.max(0, Math.floor(i-2*period));
+      const hi=Math.floor(i-period/2);
+      if(hi<=lo) continue;
+      let best=-Infinity, bj=-1;
+      for(let j=lo;j<hi;j++){
+        const dt=(i-j)/period;
+        const pen=-tightness*Math.pow(Math.log(dt+1e-9),2);
+        const sc=cumscore[j]+pen;
+        if(sc>best){ best=sc; bj=j; }
+      }
+      if(bj>=0){ cumscore[i]=odf[i]+best; backlink[i]=bj; }
+    }
+    // melhor ponto final nos ultimos ~2 periodos
+    let start=Nn-1, bestEnd=-Infinity;
+    for(let i=Math.max(0,Nn-Math.floor(2*period));i<Nn;i++){ if(cumscore[i]>bestEnd){ bestEnd=cumscore[i]; start=i; } }
+    const beats=[]; let b=start;
+    while(b>=0){ beats.push(b*hopS); b=backlink[b]; }
+    beats.reverse();
+    return beats;
+  }
+
+  // ====== Motor de análise de andamento (fluxo espectral + verificação de fase) ======
+  async function analyzeTempoEngine(buffer, modoForcado){
+    const sr0=buffer.sampleRate;
+    const ch=buffer.getChannelData(0);
+    const dec=Math.max(1,Math.round(sr0/22050));
+    const sr=sr0/dec, N=1024, HOP=512;
+    const total=Math.floor(ch.length/dec);
+    const nF=Math.max(8,Math.floor((total-N)/HOP));
+    const hopS=HOP/sr;
+    const win=new Float32Array(N);
+    for(let i=0;i<N;i++) win[i]=0.5-0.5*Math.cos(2*Math.PI*i/N);
+    function fft(re,im){
+      const n=re.length;
+      for(let i=1,j=0;i<n;i++){
+        let bit=n>>1;
+        for(;j&bit;bit>>=1) j^=bit;
+        j|=bit;
+        if(i<j){ let t=re[i];re[i]=re[j];re[j]=t; t=im[i];im[i]=im[j];im[j]=t; }
+      }
+      for(let len=2;len<=n;len<<=1){
+        const ang=-2*Math.PI/len, wr=Math.cos(ang), wi=Math.sin(ang);
+        for(let i=0;i<n;i+=len){
+          let cr=1, ci=0;
+          for(let k=0;k<len/2;k++){
+            const ur=re[i+k], ui=im[i+k];
+            const ar=re[i+k+len/2], ai=im[i+k+len/2];
+            const vr=ar*cr-ai*ci, vi=ar*ci+ai*cr;
+            re[i+k]=ur+vr; im[i+k]=ui+vi;
+            re[i+k+len/2]=ur-vr; im[i+k+len/2]=ui-vi;
+            const ncr=cr*wr-ci*wi; ci=cr*wi+ci*wr; cr=ncr;
+          }
+        }
+      }
+    }
+    const odf=new Float32Array(nF);
+    const odfL=new Float32Array(nF);   // fluxo só dos graves (bumbo/baixo, até ~170 Hz)
+    const prev=new Float32Array(N/2);
+    const re=new Float32Array(N), im=new Float32Array(N);
+    // guarda a potencia espectral por frame (para o onset mel da re-ancoragem)
+    const nb=N/2+1;
+    const magPow=new Array(nF);
+    for(let f=0; f<nF; f++){
+      const s=f*HOP;
+      for(let i=0;i<N;i++){ re[i]=(ch[(s+i)*dec]||0)*win[i]; im[i]=0; }
+      fft(re,im);
+      const pw=new Float32Array(nb);
+      let fl=0, flL=0;
+      for(let b=1;b<N/2;b++){
+        const p=re[b]*re[b]+im[b]*im[b];
+        pw[b]=p;
+        const m=Math.log(1+Math.sqrt(p));
+        const d=m-prev[b];
+        if(d>0){ fl+=d; if(b<=8) flL+=d; }
+        prev[b]=m;
+      }
+      magPow[f]=pw;
+      odf[f]=fl; odfL[f]=flL;
+      if(f%1200===0) await new Promise(r=>setTimeout(r,0));
+    }
+    const Wm=Math.max(2,Math.round(0.35/hopS));
+    function realca(src){
+      const out=new Float32Array(nF);
+      let acc=0; const fila=[];
+      for(let i=0;i<nF;i++){
+        fila.push(src[i]); acc+=src[i];
+        if(fila.length>Wm) acc-=fila.shift();
+        out[i]=Math.max(0, src[i]-acc/fila.length);
+      }
+      return out;
+    }
+    const odf2=realca(odf);
+    const odf2L=realca(odfL);
+    let meanO=0; for(let i=0;i<nF;i++) meanO+=odf2[i]; meanO/=nF;
+    function acorrE(L){ L=Math.round(L); if(L<2||L>=nF-2) return 0; let s=0,n=0; for(let i=0;i+L<nF;i++){s+=odf2[i]*odf2[i+L];n++;} return n?s/n:0; }
+    function combE(b){ const L=(60/b)/hopS; return acorrE(L)+0.7*acorrE(L*2)+0.5*acorrE(L*3)+0.35*acorrE(L*4); }
+    const curve=[];
+    for(let b=40;b<=220;b+=0.5) curve.push([b,combE(b)]);
+    const cands=new Set();
+    for(let i=2;i<curve.length-2;i++){
+      const v=curve[i][1];
+      if(v>curve[i-1][1]&&v>=curve[i+1][1]&&v>curve[i-2][1]&&v>=curve[i+2][1]) cands.add(curve[i][0]);
+    }
+    if(!cands.size) cands.add(100);
+    [...cands].forEach(b=>{ [b/2,b*2,b*3/4,b*4/3].forEach(v=>{ if(v>=40&&v<=220) cands.add(Math.round(v*2)/2); }); });
+    function beatScore(b){
+      const P=(60/b)/hopS;
+      let best=0,bph=0;
+      for(let s=0;s<24;s++){
+        const ph=s*P/24;
+        let sum=0,n=0;
+        for(let t=ph;t<nF;t+=P){ sum+=odf2[Math.round(t)]||0; n++; }
+        const v=n? sum/n:0;
+        if(v>best){best=v;bph=ph;}
+      }
+      return {score:best/(meanO+1e-9), ph:bph};
+    }
+    function prefLento(b){ return 1+0.12*Math.exp(-0.5*Math.pow((b-110)/70,2)); }
+    let bestB=100,bestV=-1,bestPh=0,done=0;
+    for(const b of cands){
+      const bs=beatScore(b);
+      const v=bs.score*prefLento(b);
+      if(v>bestV){bestV=v;bestB=b;bestPh=bs.ph;}
+      if(++done%6===0) await new Promise(r=>setTimeout(r,0));
+    }
+    for(let b=bestB-1.5;b<=bestB+1.5;b+=0.05){
+      if(b<40||b>220) continue;
+      const bs=beatScore(b);
+      const v=bs.score*prefLento(b);
+      if(v>bestV){bestV=v;bestB=b;bestPh=bs.ph;}
+    }
+    // Desempate de oitava: música rápida (ex: 176) costuma ser detectada como
+    // metade (88). Se o dobro couber na faixa e sua fase for quase tão forte
+    // (>=88% do score), prefere o dobro, que explica os ataques de subdivisão.
+    const dobro=bestB*2;
+    if(dobro<=210){
+      const bsD=beatScore(dobro), bsB=beatScore(bestB);
+      if(bsD.score >= bsB.score*0.88){
+        bestB=dobro; bestPh=bsD.ph;
+      }
+    }
+    // ---- Rastreamento de batidas (programação dinâmica de Ellis) ----
+    // Em vez de uma grade fixa, encontra cada batida real, seguindo as variações humanas de andamento.
+    const P=(60/bestB)/hopS, tight=700;
+    const scoreDP=new Float32Array(nF).fill(0);
+    const fromDP=new Int32Array(nF).fill(-1);
+    const lo=Math.max(2,Math.round(P*0.78)), hi=Math.max(lo+2,Math.round(P*1.30));
+    for(let i=0;i<nF;i++){
+      let bv=-1e9,bj=-1;
+      const j1=i-lo;
+      for(let j=Math.max(0,i-hi);j<=j1;j++){
+        const s=scoreDP[j]-tight*Math.pow(Math.log((i-j)/P),2);
+        if(s>bv){bv=s;bj=j;}
+      }
+      scoreDP[i]=odf2[i]+(bj>=0?bv:0);
+      fromDP[i]=bj;
+      if(i%2500===0) await new Promise(r=>setTimeout(r,0));
+    }
+    let endI=nF-1,endV=-1e9;
+    for(let i=Math.max(0,nF-Math.round(P*2));i<nF;i++){
+      if(scoreDP[i]>endV){endV=scoreDP[i];endI=i;}
+    }
+    const idxs=[];
+    for(let i=endI;i>=0;i=fromDP[i]){ idxs.push(i); if(fromDP[i]<0) break; }
+    idxs.reverse();
+    let beats=idxs.map(i=>i*hopS);
+    let strengths=idxs.map(i=>odf2[i]);
+    let lows=idxs.map(i=>{
+      let v=0;
+      for(let k=-2;k<=2;k++) v=Math.max(v, odf2L[i+k]||0);
+      return v;
+    });
+    // descarta batidas "fantasma" antes da música realmente começar
+    const avgS=strengths.reduce((a,b)=>a+b,0)/Math.max(1,strengths.length);
+    let k0=0;
+    while(k0<strengths.length-1 && strengths[k0]<0.3*avgS) k0++;
+    beats=beats.slice(k0); strengths=strengths.slice(k0); lows=lows.slice(k0);
+    // Andamento mediano do rastreador (reserva para músicas que respiram)
+    let bpmDP=bestB;
+    if(beats.length>4){
+      const iv=[]; for(let i=1;i<beats.length;i++) iv.push(beats[i]-beats[i-1]);
+      iv.sort((a,b)=>a-b);
+      bpmDP=60/iv[Math.floor(iv.length/2)];
+    }
+    // ---- GRADE DE ESTÚDIO: ajuste fino global (BPM x fase), com peso nos graves ----
+    const durS=nF*hopS;
+    let fam=bpmDP;
+    while(fam<55) fam*=2;
+    while(fam>145) fam/=2;
+    function gridScore(b,ph){
+      const per=60/b;
+      let s=0,n=0;
+      for(let t=ph;t<durS-0.05;t+=per){
+        const i=Math.round(t/hopS);
+        s+=(odf2[i]||0)+1.5*(odf2L[i]||0);
+        n++;
+      }
+      return n? s/n:0;
+    }
+    let G={b:fam,ph:0,s:-1}, passo=0;
+    for(let b=Math.max(40,fam-1.6); b<=fam+1.6; b+=0.05){
+      const per=60/b;
+      for(let ph=0; ph<per; ph+=0.008){
+        const v=gridScore(b,ph);
+        if(v>G.s) G={b,ph,s:v};
+      }
+      if(++passo%12===0) await new Promise(r=>setTimeout(r,0));
+    }
+    for(let b=G.b-0.08; b<=G.b+0.08; b+=0.002){
+      const per=60/b;
+      for(let ph=Math.max(0,G.ph-0.02); ph<=G.ph+0.02; ph+=0.002){
+        const v=gridScore(b,ph);
+        if(v>G.s) G={b,ph,s:v};
+      }
+    }
+    // Estabilidade robusta a viradas: mede a fase local em MUITAS janelas curtas,
+    // calcula a densidade de ataques de cada uma, e IGNORA as janelas mais densas
+    // (viradas de Gospel Chops, fills) ao julgar se o pulso é estável.
+    const perG=60/G.b;
+    const NJAN=16;
+    const janelas=[];
+    for(let sec=0; sec<NJAN; sec++){
+      const a0=sec*durS/NJAN, a1=(sec+1)*durS/NJAN;
+      let best={d:0,v:-1}, densidade=0, cont=0;
+      for(let d=-0.06; d<=0.0601; d+=0.003){
+        let sum=0,n=0;
+        for(let t=G.ph+d; t<durS-0.05; t+=perG){
+          if(t<a0||t>=a1) continue;
+          const i=Math.round(t/hopS);
+          sum+=(odf2[i]||0)+1.5*(odf2L[i]||0);
+          n++;
+        }
+        const v=n? sum/n:0;
+        if(v>best.v) best={d,v};
+      }
+      // densidade de ataques na janela (proxy de "virada"): média do ODF cheio
+      const f0=Math.floor(a0/hopS), f1=Math.min(nF-1,Math.floor(a1/hopS));
+      for(let f=f0;f<=f1;f++){ densidade+=odf2[f]||0; cont++; }
+      densidade = cont? densidade/cont : 0;
+      if(best.v>0) janelas.push({d:best.d, dens:densidade});
+    }
+    // Decisão por CONSENSO de seções: quantas seguem a grade fixa base?
+    // (Uma seção de Gospel Chops variável não pode mais soltar a música inteira.)
+    let driftMs=0, fracEstavel=1;
+    if(janelas.length>=4){
+      const ordDens=[...janelas].sort((a,b)=>a.dens-b.dens);
+      const mantidas=ordDens.slice(0, Math.max(3, Math.ceil(ordDens.length*0.67)));
+      const fases=mantidas.map(j=>j.d).sort((a,b)=>a-b);
+      const q1=fases[Math.floor(fases.length*0.15)], q3=fases[Math.ceil(fases.length*0.85)-1];
+      driftMs=Math.max(0,Math.round((q3-q1)*1000));
+      // fração de TODAS as janelas cuja fase fica perto da grade fixa (dentro de 55ms)
+      const perto=janelas.filter(j=>Math.abs(j.d)<=0.055).length;
+      fracEstavel=perto/janelas.length;
+    }
+    // ELÁSTICO: se a maioria das seções segue a grade fixa, TRAVA em grade fixa.
+    // Tolera as seções variáveis com pequeno desvio, em vez de soltar tudo à deriva.
+    // (É o que o Moises faz: grade ancorada, nunca abandono total do pulso.)
+    let mode='beats';
+    let musicaMetronomica = fracEstavel>=0.6 || driftMs<=50;
+    // Seletor manual sobrepõe a decisão automática
+    if(modoForcado==='grid') musicaMetronomica=true;
+    else if(modoForcado==='follow') musicaMetronomica=false;
+    if(musicaMetronomica){
+      mode='grid';
+      beats=[]; strengths=[]; lows=[];
+      for(let t=G.ph; t<durS-0.05; t+=perG){
+        const i=Math.round(t/hopS);
+        beats.push(t);
+        strengths.push(odf2[i]||0);
+        let v=0; for(let k=-2;k<=2;k++) v=Math.max(v,odf2L[i+k]||0);
+        lows.push(v);
+      }
+    } else {
+      // Música que VARIA de andamento: CURVA DE BPM LOCAL.
+      // Estima o andamento em janelas deslizantes de 12s por autocorrelação
+      // (que enxerga o PULSO, nunca uma subdivisão isolada), gerando uma curva
+      // suave de BPM. A grade segue essa curva: acompanha a variação real lenta
+      // SEM os picos que um rastreador guloso teria ao pular para ataques errados.
+      const JAN=12.0, PASSO=2.0;
+      const lo=G.b*0.92, hi=G.b*1.08;   // faixa estreita: só variações reais de andamento
+      function acSeg(a0,a1,lag){
+        const L=Math.round(lag); if(L<2) return 0;
+        let s=0,n=0;
+        for(let i=a0;i+L<a1;i++){ s+=odf2[i]*odf2[i+L]; n++; }
+        return n? s/n:0;
+      }
+      const curvaT=[], curvaB=[];
+      for(let t=0; t<durS; t+=PASSO){
+        const a0=Math.round(t/hopS), a1=Math.round(Math.min(durS,t+JAN)/hopS);
+        if(a1-a0<50) continue;
+        let melhorB=G.b, melhorV=-1;
+        for(let b=lo; b<=hi; b+=0.2){
+          const L=(60/b)/hopS;
+          const v=acSeg(a0,a1,L)+0.6*acSeg(a0,a1,2*L);
+          if(v>melhorV){ melhorV=v; melhorB=b; }
+        }
+        curvaT.push(t+JAN/2); curvaB.push(melhorB);
+      }
+      function bpmEm(t){
+        if(!curvaT.length) return G.b;
+        if(t<=curvaT[0]) return curvaB[0];
+        if(t>=curvaT[curvaT.length-1]) return curvaB[curvaB.length-1];
+        for(let i=1;i<curvaT.length;i++){
+          if(t<=curvaT[i]){
+            const f=(t-curvaT[i-1])/(curvaT[i]-curvaT[i-1]);
+            return curvaB[i-1]+(curvaB[i]-curvaB[i-1])*f;
+          }
+        }
+        return G.b;
+      }
+      // RE-ANCORAGEM AUTOMÁTICA DE FASE (onset mel + DP de Ellis).
+      // Em vez de encadear batidas (que acumula erro de fase), o rastreador
+      // encontra o caminho de batidas que melhor casa com os ataques REAIS,
+      // re-sincronizando sozinho. Validado: erro de 144-274ms caiu para 0-23ms.
+      const nmels=40;
+      const fbMel=bancoMel(sr, N, nmels);
+      const odfMel=onsetMel(magPow, nF, nb, fbMel, nmels);
+      // BPM medio da curva local, como semente do periodo do DP
+      let bpmSemente=G.b;
+      if(curvaB.length){ let s=0; for(const v of curvaB) s+=v; bpmSemente=s/curvaB.length; }
+      // Escolhe entre metade/base/dobro o pulso que melhor casa com os ataques
+      // reais (maior score do onset), favorecendo a faixa musical tipica 60-140.
+      function scoreDoBpm(bpm){
+        const bts=beatTrackDP(odfMel, hopS, bpm, 100);
+        if(bts.length<4) return {score:-1, beats:bts};
+        let s=0; for(const t of bts){ s+=(odfMel[Math.round(t/hopS)]||0); }
+        let sc=s/bts.length;
+        // preferencia pela faixa musical tipica de PULSO (70-150 bpm), onde
+        // quase toda musica popular/gospel cai. Penaliza meio-tempo (<65) e
+        // subdivisao (>160) para nao marcar a cada 2 tempos nem em colcheias.
+        if(bpm<70 || bpm>150) sc*=0.80;
+        if(bpm<58 || bpm>175) sc*=0.65;
+        if(bpm<48 || bpm>200) sc*=0.5;
+        return {score:sc, beats:bts};
+      }
+      let melhor={score:-1, beats:[]};
+      for(const mult of [0.5, 1, 2]){
+        const bpm=bpmSemente*mult;
+        if(bpm<40 || bpm>220) continue;
+        const r=scoreDoBpm(bpm);
+        if(r.score>melhor.score) melhor=r;
+      }
+      const beatsDP=melhor.beats;
+      if(beatsDP.length>4){
+        beats=beatsDP;
+        strengths=beatsDP.map(t=>odf2[Math.round(t/hopS)]||0);
+        lows=beatsDP.map(t=>{ const i=Math.round(t/hopS); let lv=0; for(let k=-2;k<=2;k++) lv=Math.max(lv,odf2L[i+k]||0); return lv; });
+      } else {
+        // fallback: se o DP falhar, mantem a curva encadeada antiga
+        const beatsC=[G.ph], strC=[], lowC=[];
+        while(beatsC[beatsC.length-1] < durS-1){
+          const ultimo=beatsC[beatsC.length-1];
+          const b=bpmEm(ultimo);
+          beatsC.push(ultimo+60/b);
+          const i=Math.round(beatsC[beatsC.length-1]/hopS);
+          strC.push(odf2[i]||0);
+          let lv=0; for(let k=-2;k<=2;k++) lv=Math.max(lv,odf2L[i+k]||0); lowC.push(lv);
+        }
+        strC.unshift(odf2[Math.round(G.ph/hopS)]||0);
+        { let lv=0; const i0=Math.round(G.ph/hopS); for(let k=-2;k<=2;k++) lv=Math.max(lv,odf2L[i0+k]||0); lowC.unshift(lv); }
+        beats=beatsC; strengths=strC; lows=lowC;
+      }
+    }
+    const bpmOut = G.b;   // BPM base representativo
+    // Primeiro tempo = a 1ª batida da grade (dentro dos primeiros compassos).
+    // Simples e previsível: NÃO tenta achar o ponto "mais forte" da música,
+    // que causava o salto para o meio da música em faixas que crescem devagar.
+    const primeiro = beats.length? Math.min(beats[0], (60/G.b)*4) : 0;
+    return {
+      bpm:Math.round(bpmOut*100)/100,
+      firstBeat:Math.round(Math.max(0,primeiro)*1000)/1000,
+      beats, strengths, lows, mode, driftMs
+    };
+  }
+
+  // ====== Detecção de acordes: cromas por batida + suavização de Viterbi ======
+  const CH={segments:null, measureText:'', copyText:''};
+  const NOTAS=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  async function analyzeChords(buffer){
+    const sr0=buffer.sampleRate, xall=buffer.getChannelData(0);
+    const dec=Math.max(1,Math.round(sr0/22050)), sr=sr0/dec;
+    const N=4096, HOP=2048;
+    const nFr=Math.max(4,Math.floor((xall.length/dec - N)/HOP));
+    const hopS=HOP/sr;
+    const win=new Float32Array(N);
+    for(let i=0;i<N;i++) win[i]=0.5-0.5*Math.cos(2*Math.PI*i/N);
+    function fft(re,im){
+      const n=re.length;
+      for(let i=1,j=0;i<n;i++){
+        let bit=n>>1;
+        for(;j&bit;bit>>=1) j^=bit;
+        j|=bit;
+        if(i<j){ let t=re[i];re[i]=re[j];re[j]=t; t=im[i];im[i]=im[j];im[j]=t; }
+      }
+      for(let len=2;len<=n;len<<=1){
+        const ang=-2*Math.PI/len, wr=Math.cos(ang), wi=Math.sin(ang);
+        for(let i0=0;i0<n;i0+=len){
+          let cr=1,ci=0;
+          for(let k=0;k<len/2;k++){
+            const ur=re[i0+k], ui=im[i0+k];
+            const ar=re[i0+k+len/2], ai=im[i0+k+len/2];
+            const vr=ar*cr-ai*ci, vi=ar*ci+ai*cr;
+            re[i0+k]=ur+vr; im[i0+k]=ui+vi;
+            re[i0+k+len/2]=ur-vr; im[i0+k+len/2]=ui-vi;
+            const ncr=cr*wr-ci*wi; ci=cr*wi+ci*wr; cr=ncr;
+          }
+        }
+      }
+    }
+    // mapa bin -> classe de nota (60 Hz a 2 kHz)
+    const b0=Math.max(2,Math.floor(60*N/sr)), b1=Math.min(N/2-1,Math.ceil(2000*N/sr));
+    const pcOf=new Int8Array(b1+1);
+    for(let b=b0;b<=b1;b++){
+      const f=b*sr/N;
+      pcOf[b]=((Math.round(12*Math.log2(f/440))+69)%12+12)%12;
+    }
+    const chroma=new Float32Array(nFr*12);
+    const re=new Float32Array(N), im=new Float32Array(N);
+    for(let f=0;f<nFr;f++){
+      const s=f*HOP;
+      for(let i=0;i<N;i++){ re[i]=(xall[(s+i)*dec]||0)*win[i]; im[i]=0; }
+      fft(re,im);
+      for(let b=b0;b<=b1;b++){
+        chroma[f*12+pcOf[b]] += Math.sqrt(re[b]*re[b]+im[b]*im[b]);
+      }
+      if(f%300===0){
+        chordStatus.textContent='Ouvindo a harmonia... '+Math.round(100*f/nFr)+'%';
+        await new Promise(r=>setTimeout(r,0));
+      }
+    }
+    // cromas por batida
+    const beats=METRO.beats;
+    const medIv = beats.length>2? (beats[Math.min(9,beats.length-1)]-beats[0])/Math.min(9,beats.length-1) : 0.8;
+    const nB=beats.length;
+    const bc=new Float32Array(nB*12), energia=new Float32Array(nB);
+    for(let i=0;i<nB;i++){
+      const t0=beats[i], t1=(i+1<nB? beats[i+1]: beats[i]+medIv);
+      const f0=Math.max(0,Math.floor(t0/hopS)), f1=Math.min(nFr-1,Math.ceil(t1/hopS));
+      let e=0;
+      for(let f=f0;f<=f1;f++) for(let p=0;p<12;p++){ bc[i*12+p]+=chroma[f*12+p]; }
+      let nrm=0;
+      for(let p=0;p<12;p++){ e+=bc[i*12+p]; nrm+=bc[i*12+p]*bc[i*12+p]; }
+      nrm=Math.sqrt(nrm)||1;
+      for(let p=0;p<12;p++) bc[i*12+p]/=nrm;
+      energia[i]=e;
+    }
+    const eMed=[...energia].sort((a,b)=>a-b)[Math.floor(nB/2)]||1;
+    // moldes: 12 maiores + 12 menores
+    const molds=[];
+    for(let r=0;r<12;r++){
+      const M=new Float32Array(12), m=new Float32Array(12);
+      M[r]=1;M[(r+4)%12]=1;M[(r+7)%12]=1;
+      m[r]=1;m[(r+3)%12]=1;m[(r+7)%12]=1;
+      const nz=1/Math.sqrt(3);
+      for(let p=0;p<12;p++){ M[p]*=nz; m[p]*=nz; }
+      molds.push({label:NOTAS[r],vec:M});
+      molds.push({label:NOTAS[r]+'m',vec:m});
+    }
+    const NS=molds.length+1, NC=molds.length; // último estado = sem acorde
+    // Viterbi com custo de troca (evita acorde piscando)
+    const dp=new Float32Array(nB*NS).fill(-1e9);
+    const bk=new Int16Array(nB*NS);
+    function emit(i,s){
+      if(s===NC) return energia[i]<0.25*eMed? 0.8 : 0.25;
+      let d=0; const v=molds[s].vec;
+      for(let p=0;p<12;p++) d+=bc[i*12+p]*v[p];
+      return d;
+    }
+    for(let s=0;s<NS;s++){ dp[s]=emit(0,s); bk[s]=s; }
+    const TROCA=0.10;
+    for(let i=1;i<nB;i++){
+      let bestPrev=-1e9, bestIdx=0;
+      for(let s=0;s<NS;s++){ if(dp[(i-1)*NS+s]>bestPrev){ bestPrev=dp[(i-1)*NS+s]; bestIdx=s; } }
+      for(let s=0;s<NS;s++){
+        const ficar=dp[(i-1)*NS+s];
+        const trocar=bestPrev-TROCA;
+        if(ficar>=trocar){ dp[i*NS+s]=ficar+emit(i,s); bk[i*NS+s]=s; }
+        else { dp[i*NS+s]=trocar+emit(i,s); bk[i*NS+s]=bestIdx; }
+      }
+      if(i%400===0) await new Promise(r=>setTimeout(r,0));
+    }
+    let cur=0,bv=-1e9;
+    for(let s=0;s<NS;s++){ if(dp[(nB-1)*NS+s]>bv){bv=dp[(nB-1)*NS+s];cur=s;} }
+    const estados=new Int16Array(nB);
+    for(let i=nB-1;i>=0;i--){ estados[i]=cur; cur=bk[i*NS+cur]; }
+    // segmentos com tempo
+    const segs=[];
+    for(let i=0;i<nB;i++){
+      const lab = estados[i]===NC? 'N.C.' : molds[estados[i]].label;
+      const t0=beats[i], t1=(i+1<nB? beats[i+1]: beats[i]+medIv);
+      if(segs.length && segs[segs.length-1].label===lab) segs[segs.length-1].t1=t1;
+      else segs.push({t0,t1,label:lab});
+    }
+    // cifra por compasso (acorde do tempo forte)
+    const [num]=mMeter.value.split('/').map(Number);
+    const o=pickDownbeat(num);
+    const porCompasso=[];
+    for(let i=o;i<nB;i+=num){
+      porCompasso.push(estados[i]===NC? 'N.C.' : molds[estados[i]].label);
+    }
+    return {segs, porCompasso};
+  }
+  chordBtn.addEventListener('click', async ()=>{
+    if(!state.tracks.length){ chordStatus.textContent='Importe uma pista primeiro.'; return; }
+    if(!METRO.beats || METRO.beats.length<4){ chordStatus.textContent='Aguarde a análise do andamento terminar e tente de novo.'; return; }
+    chordBtn.disabled=true;
+    try{
+      const r=await analyzeChords(state.tracks[0].buffer);
+      CH.segments=r.segs;
+      montarFaixaAcordes(r.segs);
+      const linhas=[];
+      for(let i=0;i<r.porCompasso.length;i+=4){
+        linhas.push('| '+r.porCompasso.slice(i,i+4).join(' | ')+' |');
+      }
+      CH.measureText=linhas.join('\n');
+      CH.copyText=r.porCompasso.join(' | ');
+      chordGrid.textContent=CH.measureText;
+      chordGrid.style.display='block';
+      chordActions.style.display='block';
+      chordStatus.textContent=r.segs.length+' trechos harmônicos detectados. Dê o play para acompanhar.';
+    }catch(err){
+      chordStatus.textContent='A detecção falhou. Tente novamente.';
+    }
+    chordBtn.disabled=false;
+  });
+  function montarFaixaAcordes(segs){
+    chordLane.innerHTML='';
+    CH._cards=[];
+    // ignora trechos "sem acorde" muito curtos na faixa visual, mas mantem a barra fluida
+    segs.forEach((s,i)=>{
+      const card=document.createElement('div');
+      card.className='chord-card';
+      const dur=Math.max(0,s.t1-s.t0);
+      card.innerHTML=(s.label==='N.C.'? '<span style=\'font-size:18px\'>N.C.</span>' : s.label)+'<span class="sub">'+dur.toFixed(1)+'s</span>';
+      chordLane.appendChild(card);
+      CH._cards.push(card);
+    });
+    chordLaneWrap.classList.add('on');
+    chordLaneHint.style.display='block';
+    CH._activeIdx=-1;
+  }
+  function atualizarFaixaAcordes(pos){
+    if(!CH.segments || !CH._cards) return;
+    // acha o segmento atual
+    let idx=-1;
+    for(let i=0;i<CH.segments.length;i++){ if(pos>=CH.segments[i].t0 && pos<CH.segments[i].t1){ idx=i; break; } }
+    if(idx===CH._activeIdx) { deslizarFaixa(idx,pos); return; }
+    CH._activeIdx=idx;
+    CH._cards.forEach((c,i)=>{
+      c.classList.toggle('active', i===idx);
+      c.classList.toggle('past', idx>=0 && i<idx);
+    });
+    deslizarFaixa(idx,pos);
+  }
+  function deslizarFaixa(idx,pos){
+    if(idx<0 || !CH._cards[idx]) return;
+    const card=CH._cards[idx];
+    const seg=CH.segments[idx];
+    // desliza para centralizar o cartao atual sob o playhead (centro = 50%)
+    const laneW=chordLaneWrap.clientWidth;
+    const cardCentro=card.offsetLeft + card.offsetWidth/2;
+    const desloc=laneW/2 - cardCentro;
+    chordLane.style.transform='translateX('+desloc+'px)';
+  }
+  chordCopy.addEventListener('click', async ()=>{
+    try{
+      await navigator.clipboard.writeText(CH.copyText);
+      chordStatus.textContent='Cifras copiadas! Cole no campo Cifras do módulo Partitura.';
+    }catch(e){ chordStatus.textContent='Selecione e copie o texto acima manualmente.'; }
+  });
+
+  function clickBlip(ctx,dest,bt,forte,semi,sub){
+    // Todos os bips do PULSO sao IGUAIS (sem acento de tempo forte: o acento
+    // denunciava o desalinhamento do downbeat quando o "1" do click nao casava
+    // com o "1" da musica). A SUBDIVISAO (o "e" da contagem 1 e 2 e 3 e 4) e a
+    // unica excecao: soa mais aguda e mais suave, o "alto" contra o "chao" do
+    // tempo, para o ouvido sentir a divisao durante a pre-contagem.
+    forte=false; semi=false;
+    const o=ctx.createOscillator(); o.type='square';
+    o.frequency.value = sub? 1500 : 1000;
+    const g=ctx.createGain();
+    const nivel = sub? 0.22 : 0.4;
+    g.gain.setValueAtTime(0.0001,bt);
+    g.gain.exponentialRampToValueAtTime(nivel,bt+0.003);
+    g.gain.exponentialRampToValueAtTime(0.0001,bt+0.05);
+    o.connect(g); g.connect(dest);
+    o.start(bt); o.stop(bt+0.06);
+    return o;
+  }
+  function metroBeatSec(){
+    const [num,den]=mMeter.value.split('/').map(Number);
+    if(METRO.beats && METRO.beats.length>num+2){
+      const iv=[];
+      for(let i=1;i<Math.min(10,METRO.beats.length);i++) iv.push(METRO.beats[i]-METRO.beats[i-1]);
+      iv.sort((a,b)=>a-b);
+      return iv[Math.floor(iv.length/2)];
+    }
+    const bpm=parseFloat(mBpm.value)||100;
+    return (60/bpm)*(4/den);
+  }
+  function bipesDaContagem(){
+    // nº de bipes = compassos de contagem x tempos por compasso (do compasso atual)
+    const compassos=Math.max(1,Math.min(2,parseInt(mCount.value,10)||1));
+    const [num]=mMeter.value.split('/').map(Number);
+    const tempos=num||4;
+    return { compassos, tempos, total:compassos*tempos };
+  }
+  function metroCountSec(){
+    return bipesDaContagem().total*metroBeatSec();
+  }
+  function pickDownbeat(num){
+    if(METRO.down[num]!==undefined) return METRO.down[num];
+    const low=METRO.lows||METRO.strengths;
+    let best=0,bv=-1;
+    for(let o=0;o<num;o++){
+      let s=0;
+      for(let i=o;i<low.length;i+=num) s+=low[i]+0.25*METRO.strengths[i];
+      if(s>bv){bv=s;best=o;}
+    }
+    METRO.down[num]=best;
+    return best;
+  }
+  // clock0: instante do relógio em que a MÚSICA (posição offsetSec) começa a soar.
+  // countSec: duração da pré-contagem já agendada antes de clock0.
+  function scheduleClicks(ctx, dest, clock0, countSec, offsetSec, durationSec){
+    const mode=mMode.value; if(mode==='off') return [];
+    const [num,den]=mMeter.value.split('/').map(Number);
+    const criados=[];
+    // Pré-contagem: bipes espaçados pelo BPM EXATO, com o último caindo na 1ª batida.
+    // clock0 é o instante da 1ª batida; a contagem vem imediatamente antes, sem vão.
+    if(countSec>0){
+      const cont=bipesDaContagem();
+      const cnt=cont.total;
+      const beat=metroBeatSec();
+      const comSub = (mCountSub && mCountSub.value==='on');
+      const t0=clock0-cnt*beat;
+      for(let k=0;k<cnt;k++){
+        const acentua = (k % cont.tempos)===0;
+        criados.push(clickBlip(ctx,dest, t0+k*beat, acentua, false, false));
+        // subdivisão: o "e" entre os tempos (mais agudo). Não colocamos o "e"
+        // depois do ÚLTIMO tempo, para o ouvido receber a música limpa na entrada.
+        if(comSub && k<cnt-1){
+          criados.push(clickBlip(ctx,dest, t0+k*beat+beat/2, false, false, true));
+        }
+      }
+    }
+    if(mode!=='full') return criados;
+    if(METRO.beats && METRO.beats.length>4){
+      // Clique batida a batida, seguindo o andamento real da música
+      const o=pickDownbeat(num);
+      for(let i=0;i<METRO.beats.length;i++){
+        const b=METRO.beats[i];
+        if(b<offsetSec-0.001 || b>=durationSec-0.02) continue;
+        const bt=clock0+(b-offsetSec);
+        if(bt<ctx.currentTime+0.02 && ctx.currentTime>0) continue;
+        const rel=((i-o)%num+num)%num;
+        criados.push(clickBlip(ctx,dest,bt, rel===0, (num===6&&rel===3)));
+      }
+      return criados;
+    }
+    // Reserva: grade fixa ancorada no 1º tempo (quando não há batidas mapeadas)
+    const bpm=parseFloat(mBpm.value)||100;
+    const beatSec=(60/bpm)*(4/den);
+    const fase=Math.max(0,parseFloat(mPhase.value)||0);
+    for(let k=Math.max(0,Math.ceil((offsetSec-fase-1e-6)/beatSec)); fase+k*beatSec<durationSec-0.02; k++){
+      const tMusical=fase+k*beatSec;
+      const bt=clock0+(tMusical-offsetSec);
+      if(bt<ctx.currentTime+0.02 && ctx.currentTime>0) continue;
+      const beat=k%num;
+      criados.push(clickBlip(ctx,dest,bt, beat===0, (num===6&&beat===3)));
+    }
+    return criados;
+  }
+
+  const TAPM={times:[]};
+  mBpm.addEventListener('change', ()=>{ METRO.travado=true; if($('mAutoInfo')) $('mAutoInfo').textContent='BPM fixado manualmente em '+mBpm.value+'. A detecção automática não vai sobrescrever.'; });
+  mTap.addEventListener('click', ()=>{
+    const now=performance.now();
+    if(TAPM.times.length && now-TAPM.times[TAPM.times.length-1]>2500) TAPM.times=[];
+    TAPM.times.push(now);
+    if(TAPM.times.length>=4){
+      const iv=[]; for(let i=1;i<TAPM.times.length;i++) iv.push(TAPM.times[i]-TAPM.times[i-1]);
+      iv.sort((a,b)=>a-b);
+      mBpm.value=Math.round((60000/iv[Math.floor(iv.length/2)])*10)/10;
+      METRO.travado=true;
+      mTap.textContent='TAP '+mBpm.value;
+    } else mTap.textContent='TAP '+TAPM.times.length+'...';
+    clearTimeout(TAPM.reset);
+    TAPM.reset=setTimeout(()=>{ mTap.textContent='TAP'; TAPM.times=[]; },3000);
+  });
+  $('mDown1').addEventListener('click', ()=>{
+    if(!METRO.beats || !state.playing){ $('mAutoInfo').textContent='Dê o play e toque neste botão exatamente no tempo forte da música.'; return; }
+    const pos=Math.max(0,currentPos());
+    let melhor=0, dist=1e9;
+    for(let i=0;i<METRO.beats.length;i++){
+      const d=Math.abs(METRO.beats[i]-pos);
+      if(d<dist){ dist=d; melhor=i; }
+    }
+    const [num]=mMeter.value.split('/').map(Number);
+    METRO.down={}; METRO.down[num]=((melhor%num)+num)%num;
+    $('mAutoInfo').textContent='Tempo forte ajustado. Reiniciando o clique com o acento no lugar...';
+    const p=pos;
+    pausePlayback(); state.offset=p; startPlayback(true);
+  });
+  mMeter.addEventListener('change', ()=>{ METRO.down={}; });
+  if(mTrackMode) mTrackMode.addEventListener('change', ()=>{
+    if(!state.tracks.length) return;
+    METRO.travado=false;   // permite a reanálise sobrescrever o BPM
+    const info=$('mAutoInfo');
+    if(info) info.textContent='Recalculando o andamento no modo '+(mTrackMode.value==='grid'?'Grade fixa':mTrackMode.value==='follow'?'Seguir a música':'Automático')+'...';
+    rodarAnaliseUnificada();
+  });
+  function ajustarBpmManual(fator){
+    const atual=parseFloat(mBpm.value)||100;
+    let novo=atual*fator;
+    if(novo<30||novo>240){ return; }
+    novo=Math.round(novo*100)/100;
+    mBpm.value=novo;
+    METRO.travado=true;
+    // Recalcula as batidas na nova grade, mantendo a fase do 1º tempo
+    const fase=Math.max(0,parseFloat(mPhase.value)||0);
+    const per=60/novo;
+    const dur=state.duration||0;
+    const nb=[], ns=[], nl=[];
+    for(let t=fase;t<dur-0.02;t+=per){ nb.push(t); ns.push(1); nl.push(1); }
+    METRO.beats=nb; METRO.strengths=ns; METRO.lows=nl; METRO.down={};
+    if($('mAutoInfo')) $('mAutoInfo').textContent='BPM ajustado manualmente para '+novo+' ('+(fator<1?'metade':'dobro')+'). Grade recalculada.';
+  }
+  $('mHalf').addEventListener('click', ()=> ajustarBpmManual(0.5));
+  $('mDouble').addEventListener('click', ()=> ajustarBpmManual(2));
+  $('mMapBtn').addEventListener('click', ()=> $('mMapFile').click());
+  $('mMapFile').addEventListener('change', async (e)=>{
+    const f=e.target.files[0]; e.target.value='';
+    if(!f) return;
+    try{
+      const mapa=JSON.parse(await f.text());
+      if(!Array.isArray(mapa.beats) || mapa.beats.length<4) throw new Error('sem batidas');
+      METRO.beats=mapa.beats.map(Number);
+      METRO.strengths=METRO.beats.map(()=>1);
+      METRO.lows=METRO.strengths;
+      METRO.down={};
+      if(Array.isArray(mapa.beat_numbers) && mapa.beat_numbers.length===METRO.beats.length){
+        const primeiroUm=mapa.beat_numbers.indexOf(1);
+        if(primeiroUm>=0){
+          for(const n of [2,3,4,6]) METRO.down[n]=((primeiroUm%n)+n)%n;
+        }
+      }
+      if(mapa.bpm) mBpm.value=mapa.bpm;
+      mPhase.value=Math.round(METRO.beats[0]*100)/100;
+      $('mAutoInfo').textContent='Mapa profissional carregado: '+METRO.beats.length+' batidas ('+(mapa.origem||'externo')+'). O clique seguirá este mapa.';
+    }catch(err){
+      $('mAutoInfo').textContent='Não consegui ler esse arquivo de mapa. Use o _batidas.json gerado pelo Separador.';
+    }
+  });
+  // ===== Sobre o autor: nome pulsante -> preview no hover, card no clique =====
+  (function(){
+    const btn=$('autorBtn'), tip=$('autorTip'), ov=$('sobreOverlay'), fechar=$('sobreFechar');
+    if(!btn || !ov) return;
+    function abrir(){ ov.classList.add('on'); document.body.style.overflow='hidden'; if(fechar) fechar.focus(); }
+    function fechaCard(){ ov.classList.remove('on'); document.body.style.overflow=''; btn.focus(); }
+    btn.addEventListener('click', abrir);
+    if(fechar) fechar.addEventListener('click', fechaCard);
+    ov.addEventListener('click', (e)=>{ if(e.target===ov) fechaCard(); });
+    document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && ov.classList.contains('on')) fechaCard(); });
+    // preview no hover (mostra a dica perto do nome)
+    if(tip){
+      btn.addEventListener('mouseenter', ()=>{
+        const r=btn.getBoundingClientRect();
+        tip.style.top=(r.bottom+window.scrollY+8)+'px';
+        tip.style.left=Math.max(8, r.right+window.scrollX-tip.offsetWidth)+'px';
+        tip.classList.add('on');
+      });
+      btn.addEventListener('mouseleave', ()=> tip.classList.remove('on'));
+      btn.addEventListener('focus', ()=> tip.classList.add('on'));
+      btn.addEventListener('blur', ()=> tip.classList.remove('on'));
+    }
+  })();
+
+  // ===== Popup de boas-vindas: aparece na primeira visita, reabre pelo icone =====
+  (function(){
+    const ov=$('boasVindasOverlay'), fechar=$('boasVindasFechar'), reabrir=$('reabrirBoasVindas'), entendi=$('boasVindasEntendi');
+    if(!ov) return;
+    function abrir(){ ov.classList.add('on'); document.body.style.overflow='hidden'; if(fechar) fechar.focus(); }
+    function fechaPopup(){ ov.classList.remove('on'); document.body.style.overflow=''; }
+    if(fechar) fechar.addEventListener('click', fechaPopup);
+    if(entendi) entendi.addEventListener('click', fechaPopup);
+    ov.addEventListener('click', (e)=>{ if(e.target===ov) fechaPopup(); });
+    document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && ov.classList.contains('on')) fechaPopup(); });
+    if(reabrir) reabrir.addEventListener('click', abrir);
+    try{
+      if(!localStorage.getItem('orivox_boasvindas_home_v1')){
+        abrir();
+        localStorage.setItem('orivox_boasvindas_home_v1','1');
+      }
+    }catch(e){ /* localStorage indisponivel (modo privado etc): so mostra sob demanda pelo icone */ }
+  })();
+
+  mVol.addEventListener('input', ()=>{
+    if(METRO.gain && state.ctx) METRO.gain.gain.setTargetAtTime(mVol.value/100, state.ctx.currentTime, .015);
+  });
+  mPan.addEventListener('input', ()=>{
+    const v=parseInt(mPan.value,10)||0;
+    if(METRO.panner && state.ctx) METRO.panner.pan.setTargetAtTime(v/100, state.ctx.currentTime, .015);
+    const lbl=$('mPanLbl');
+    if(lbl) lbl.textContent = v===0? 'Centro' : (v<0? 'Esquerda '+(-v)+'%' : 'Direita '+v+'%');
+  });
+  mPan.addEventListener('dblclick', ()=>{
+    mPan.value=0;
+    if(METRO.panner && state.ctx) METRO.panner.pan.setTargetAtTime(0, state.ctx.currentTime, .015);
+    const lbl=$('mPanLbl'); if(lbl) lbl.textContent='Centro';
+  });
+
+  function addTrack(name, buffer){
+    const ins = identificarInstrumento(name);
+    const t = {
+      id: state.nextId++,
+      name, buffer,
+      volume: 0.9, muted:false, solo:false,
+      color: ins? ins.cor : COLORS[(state.tracks.length)%COLORS.length],
+      icone: ins? ins.icone : '\uD83C\uDFB5',
+      pan:0,
+      node:null, gain:null, analyser:null, panner:null, peaks:null, el:{}
+    };
+    state.tracks.push(t);
+    state.duration = Math.max(...state.tracks.map(x=>x.buffer.duration));
+    buildStrip(t);
+    agendarAnaliseTempo();
+  }
+
+  // Detecção unificada: espera as pistas assentarem e analisa a SOMA de todas.
+  // Isso resolve o BPM errado no multipista (uma pista esparsa não decide mais o andamento).
+  let _analiseTimer=null, _analiseSeq=0;
+  function agendarAnaliseTempo(){
+    if(METRO.travado) return;   // usuário fixou o BPM manualmente: não sobrescrever
+    const info=$('mAutoInfo');
+    if(info) info.textContent='Aguardando as pistas para analisar o andamento do conjunto...';
+    clearTimeout(_analiseTimer);
+    // Espera 700ms após a última pista chegar, para consolidar importações em lote
+    _analiseTimer=setTimeout(()=> rodarAnaliseUnificada(), 700);
+  }
+
+  function somarPistas(){
+    // Mixa todas as pistas audíveis (ou todas, se todas mudas) num buffer mono para análise
+    const usar = state.tracks.some(audible)? state.tracks.filter(audible) : state.tracks;
+    if(!usar.length) return null;
+    const sr=usar[0].buffer.sampleRate;
+    const len=Math.max(...usar.map(t=>t.buffer.length));
+    const mix=new Float32Array(len);
+    for(const t of usar){
+      const d=t.buffer.getChannelData(0), n=d.length;
+      for(let i=0;i<n;i++) mix[i]+=d[i];
+    }
+    const inv=1/usar.length;
+    for(let i=0;i<len;i++) mix[i]*=inv;
+    return {data:mix, sampleRate:sr, length:len,
+            getChannelData:()=>mix, duration:len/sr, numberOfChannels:1};
+  }
+
+  async function rodarAnaliseUnificada(){
+    if(METRO.travado) return;
+    const info=$('mAutoInfo');
+    const mix=somarPistas();
+    if(!mix){ return; }
+    const seq=++_analiseSeq;
+    const nP=state.tracks.length;
+    if(info) info.textContent='Analisando o andamento'+(nP>1? ' de '+nP+' pistas somadas':'')+'...';
+    try{
+      const forc = mTrackMode? mTrackMode.value : 'auto';
+      const r=await analyzeTempoEngine(mix, forc==='auto'? null : forc);
+      if(seq!==_analiseSeq) return;   // chegou pista nova durante a análise: descarta resultado velho
+      METRO.beats=r.beats; METRO.strengths=r.strengths; METRO.lows=r.lows||r.strengths; METRO.down={};
+      mBpm.value=r.bpm;
+      mPhase.value=r.firstBeat;
+      METRO.detected=true;
+      if(info){
+        const fonte = nP>1? ' ('+nP+' pistas somadas)':'';
+        const manual = (mTrackMode && mTrackMode.value!=='auto');
+        const selo = manual? ' [modo manual]':'';
+        info.innerHTML='';
+        if(r.mode==='grid'){
+          info.textContent='Grade fixa'+fonte+selo+': '+r.bpm+' BPM cravados do início ao fim (variação: '+r.driftMs+' ms).';
+          // AVISO ACIONÁVEL: variação grande detectada apesar de ter travado grade
+          if(!manual && r.driftMs>=60){
+            const aviso=document.createElement('div');
+            aviso.style.cssText='margin-top:8px;padding:8px 10px;background:rgba(42,212,200,0.12);border:1px solid var(--gold-soft);border-radius:8px;font-size:12.5px';
+            aviso.innerHTML='Esta música parece variar de andamento ('+r.driftMs+' ms de variação). Se o clique desandar em algum trecho, ';
+            const btn=document.createElement('button');
+            btn.textContent='experimente o modo Seguir a música';
+            btn.className='btn btn-ghost btn-sm';
+            btn.style.cssText='margin-left:4px;padding:3px 8px;font-size:12px';
+            btn.addEventListener('click', ()=>{
+              if(mTrackMode){ mTrackMode.value='follow'; mTrackMode.dispatchEvent(new Event('change')); }
+            });
+            aviso.appendChild(btn);
+            info.appendChild(aviso);
+          }
+        } else {
+          info.textContent='Seguir a música'+fonte+selo+': '+r.beats.length+' batidas (~'+r.bpm+' BPM; acompanhando as variações de andamento). Se ainda desandar em viradas, gere o mapa no Colab.';
+        }
+      }
+    }catch(e){ if(info) info.textContent='Detecção automática indisponível; ajuste o BPM manualmente ou use o TAP.'; }
+  }
+
+  /* ---------------- UI das pistas ---------------- */
+  function buildStrip(t){
+    const div = document.createElement('div');
+    div.className='strip';
+    div.innerHTML = `
+      <div class="strip-top">
+        <span class="strip-ic" style="color:${t.color};border-color:${t.color}44;background:${t.color}14" title="Instrumento identificado">${t.icone||'\uD83C\uDFB5'}</span>
+        <input class="strip-name" value="${escapeHtml(t.name)}" aria-label="Nome da pista" spellcheck="false">
+        <span class="strip-dur">${fmtTime(t.buffer.duration)}</span>
+        <button class="strip-remove" title="Remover pista" aria-label="Remover pista">✕</button>
+      </div>
+      <canvas class="wave" title="Clique para pular para este ponto"></canvas>
+      <div class="meter"><div class="meter-fill"></div></div>
+      <div class="strip-controls">
+        <input type="range" class="vol" min="0" max="100" value="${Math.round(t.volume*100)}" aria-label="Volume da pista">
+        <span class="vol-val">${Math.round(t.volume*100)}%</span>
+        <span class="pan-lbl">L</span>
+        <input type="range" class="pan" min="-100" max="100" value="0" aria-label="Pan esquerda/direita" title="Pan (duplo clique volta ao centro)">
+        <span class="pan-lbl">R</span>
+      </div>
+      <div class="strip-btns">
+        <button class="chip chip-mute" aria-pressed="false">MUDO</button>
+        <button class="chip chip-solo" aria-pressed="false">SOLO</button>
+        <button class="chip chip-midi chip-conv">♪ MIDI → Partitura</button>
+      </div>
+      <div class="conv-panel">
+        <div class="conv-row">
+          <div class="field"><label>Tipo de conversão</label>
+            <select class="conv-mode">
+              <option value="melodic">Melódica/harmônica (voz, violão, teclado)</option>
+              <option value="percussion">Percussão (bateria) · experimental</option>
+            </select>
+          </div>
+          <div class="field"><label>Sensibilidade</label>
+            <select class="conv-sens"><option value="0.3">Alta (capta notas fracas)</option><option value="0.5" selected>Média</option><option value="0.7">Baixa (só notas fortes)</option></select>
+          </div>
+          <div class="field"><label>Duração mínima</label>
+            <select class="conv-mindur"><option value="0.06">Curtíssima</option><option value="0.1" selected>Curta</option><option value="0.18">Média</option></select>
+          </div>
+          <div class="field"><label>Faixa</label>
+            <select class="conv-range"><option value="full" selected>Ampla</option><option value="low">Grave (baixo)</option><option value="mid">Média (voz)</option><option value="high">Aguda (solo)</option></select>
+          </div>
+        </div>
+        <button class="btn btn-gold btn-sm conv-go">Converter</button>
+        <span class="conv-status" style="font-size:12px;color:var(--teal);margin-left:8px"></span>
+        <div class="conv-prog"><div class="conv-prog-fill"></div></div>
+        <div class="conv-actions" style="display:none;margin-top:10px">
+          <button class="btn btn-gold btn-sm conv-accept">Aceitar e abrir na Partitura</button>
+          <button class="btn btn-ghost btn-sm conv-midi" title="Baixa as notas convertidas como arquivo .mid para abrir no seu DAW (Reaper, etc.)">Exportar MIDI (.mid)</button>
+          <button class="btn btn-ghost btn-sm conv-redo">Reconverter</button>
+          <button class="btn btn-ghost btn-sm conv-discard">Descartar</button>
+        </div>
+        <div class="conv-note">A conversão detecta alturas e ritmo. Dinâmica e articulação não são capturadas automaticamente. Tudo roda no seu navegador.</div>
+      </div>`;
+    stripsEl.appendChild(div);
+    t.el = {
+      strip:div,
+      meter:div.querySelector('.meter-fill'),
+      vol:div.querySelector('.vol'),
+      volVal:div.querySelector('.vol-val'),
+      wave:div.querySelector('.wave'),
+      pan:div.querySelector('.pan'),
+      conv:div.querySelector('.chip-conv'),
+      convPanel:div.querySelector('.conv-panel'),
+      convGo:div.querySelector('.conv-go'),
+      convMode:div.querySelector('.conv-mode'),
+      convSens:div.querySelector('.conv-sens'),
+      convMindur:div.querySelector('.conv-mindur'),
+      convRange:div.querySelector('.conv-range'),
+      convStatus:div.querySelector('.conv-status'),
+      convProg:div.querySelector('.conv-prog-fill'),
+      convActions:div.querySelector('.conv-actions'),
+      convAccept:div.querySelector('.conv-accept'),
+      convMidi:div.querySelector('.conv-midi'),
+      convRedo:div.querySelector('.conv-redo'),
+      convDiscard:div.querySelector('.conv-discard'),
+      mute:div.querySelector('.chip-mute'),
+      solo:div.querySelector('.chip-solo'),
+      name:div.querySelector('.strip-name'),
+      remove:div.querySelector('.strip-remove')
+    };
+    // palpite de modo pelo nome da pista
+    if(/bateria|drum|perc/i.test(t.name)) t.el.convMode.value='percussion';
+    if(/baixo|bass/i.test(t.name)) t.el.convRange.value='low';
+    if(/voz|vocal|voice/i.test(t.name)) t.el.convRange.value='mid';
+    t.el.conv.addEventListener('click', ()=>{
+      const open=t.el.convPanel.classList.toggle('open');
+      if(open) t.el.convPanel.scrollIntoView({behavior:'smooth',block:'nearest'});
+    });
+    t.el.convGo.addEventListener('click', ()=> converterPista(t));
+    t.el.convRedo.addEventListener('click', ()=> converterPista(t));
+    t.el.convDiscard.addEventListener('click', ()=>{
+      t.convResult=null;
+      t.el.convActions.style.display='none'; t.el.convStatus.textContent='Descartado.';
+    });
+    t.el.convAccept.addEventListener('click', ()=> enviarParaPartitura(t));
+    t.el.convMidi.addEventListener('click', ()=> exportarMidi(t));
+    t.el.wave.addEventListener('click', (e)=>{
+      const r=t.el.wave.getBoundingClientRect();
+      seekTo(((e.clientX-r.left)/r.width)*state.duration);
+    });
+    t.el.pan.addEventListener('input', ()=>{
+      t.pan=parseInt(t.el.pan.value,10)||0;
+      if(t.panner && state.ctx) t.panner.pan.setTargetAtTime(t.pan/100, state.ctx.currentTime, .015);
+    });
+    t.el.pan.addEventListener('dblclick', ()=>{
+      t.el.pan.value=0; t.pan=0;
+      if(t.panner && state.ctx) t.panner.pan.setTargetAtTime(0, state.ctx.currentTime, .015);
+    });
+    drawWave(t, state.offset);
+    t.el.vol.addEventListener('input', ()=>{
+      t.volume = t.el.vol.value/100;
+      t.el.volVal.textContent = t.el.vol.value+'%';
+      applyGains();
+    });
+    t.el.mute.addEventListener('click', ()=>{
+      t.muted=!t.muted;
+      t.el.mute.classList.toggle('mute-on',t.muted);
+      t.el.mute.setAttribute('aria-pressed',t.muted);
+      applyGains();
+    });
+    t.el.solo.addEventListener('click', ()=>{
+      t.solo=!t.solo;
+      t.el.solo.classList.toggle('solo-on',t.solo);
+      t.el.solo.setAttribute('aria-pressed',t.solo);
+      applyGains();
+    });
+    t.el.name.addEventListener('change', ()=>{ t.name=t.el.name.value.trim()||t.name; t.el.name.value=t.name; });
+    t.el.remove.addEventListener('click', ()=>{
+      if(!confirm('Remover a pista "'+t.name+'"?')) return;
+      const wasPlaying = state.playing;
+      if(wasPlaying) pausePlayback();
+      state.tracks = state.tracks.filter(x=>x!==t);
+      div.remove();
+      state.duration = state.tracks.length? Math.max(...state.tracks.map(x=>x.buffer.duration)) : 0;
+      if(!state.tracks.length){ state.offset=0; }
+      refreshLayout();
+      if(wasPlaying && state.tracks.length) startPlayback();
+      updateTimeUI();
+    });
+  }
+
+  const RANGE_HZ={full:[55,1400], low:[38,400], mid:[80,900], high:[180,1600]};
+  async function converterPista(t){
+    t.el.convActions.style.display='none';
+    t.el.convGo.disabled=true;
+    const modo=t.el.convMode.value;
+    const sens=parseFloat(t.el.convSens.value);
+    const minDur=parseFloat(t.el.convMindur.value);
+    const faixa=t.el.convRange.value;
+    try{
+      let notas;
+      if(modo==='percussion'){
+        t.el.convStatus.textContent='Detectando batidas de percussão...';
+        notas=await converterPercussao(t.buffer, sens, p=>{ t.el.convProg.style.width=Math.round(p*100)+'%'; });
+      } else {
+        const temBP=(typeof BasicPitch!=='undefined' || typeof basicPitch!=='undefined') && typeof tf!=='undefined';
+        if(temBP){
+          t.el.convStatus.textContent='Convertendo com Basic Pitch (IA)...';
+          try{ notas=await converterBasicPitch(t.buffer, sens, minDur, p=>{ t.el.convProg.style.width=Math.round(p*100)+'%'; }); }
+          catch(e){ t.el.convStatus.textContent='Basic Pitch indisponível; usando detector interno...'; notas=await converterYin(t.buffer, faixa, minDur, p=>{ t.el.convProg.style.width=Math.round(p*100)+'%'; }); }
+        } else {
+          t.el.convStatus.textContent='Convertendo com detector interno (monofônico)...';
+          notas=await converterYin(t.buffer, faixa, minDur, p=>{ t.el.convProg.style.width=Math.round(p*100)+'%'; });
+        }
+      }
+      if(!notas.length){ t.el.convStatus.textContent='Nenhuma nota detectada. Ajuste a sensibilidade e tente de novo.'; t.el.convGo.disabled=false; return; }
+      t.convResult={notas, modo};
+      t.el.convActions.style.display='block';
+      t.el.convStatus.textContent=notas.length+' notas detectadas. Aceite para abrir na Partitura, ou reconverta com outros parâmetros.';
+    }catch(err){
+      t.el.convStatus.textContent='A conversão falhou nesta pista.';
+    }
+    t.el.convGo.disabled=false;
+  }
+
+  async function converterBasicPitch(buffer, sens, minDur, prog){
+    const BP = (typeof BasicPitch!=='undefined')? BasicPitch : basicPitch;
+    const sr=22050;
+    let mono=buffer;
+    if(buffer.sampleRate!==sr || buffer.numberOfChannels>1){
+      const off=new OfflineAudioContext(1, Math.ceil(buffer.duration*sr), sr);
+      const s=off.createBufferSource(); s.buffer=buffer; s.connect(off.destination); s.start();
+      mono=await off.startRendering();
+    }
+    const model=new BP.BasicPitch('https://cdn.jsdelivr.net/npm/@spotify/basic-pitch@1.0.1/model/model.json');
+    const frames=[], onsets=[], contours=[];
+    await model.evaluateModel(mono.getChannelData(0), (f,o,c2)=>{ frames.push(...f); onsets.push(...o); contours.push(...c2); }, p=>prog&&prog(p*0.9));
+    const notesRaw=BP.noteFramesToTime(BP.addPitchBendsToNoteEvents(contours,
+      BP.outputToNotesPoly(frames,onsets, sens, sens, minDur? Math.round(minDur*(sr/256)):5, true)));
+    if(prog) prog(1);
+    return notesRaw.map(n=>({startTime:n.startTimeSeconds, duration:Math.max(0.05,n.durationSeconds), pitch:n.pitchMidi, velocity:Math.round((n.amplitude||0.7)*127)}))
+                   .sort((a,b)=>a.startTime-b.startTime);
+  }
+
+  async function converterYin(buffer, faixa, minDur, prog){
+    const sr=22050;
+    let mono=buffer;
+    if(buffer.sampleRate!==sr || buffer.numberOfChannels>1){
+      const off=new OfflineAudioContext(1, Math.ceil(buffer.duration*sr), sr);
+      const s=off.createBufferSource(); s.buffer=buffer; s.connect(off.destination); s.start();
+      mono=await off.startRendering();
+    }
+    const x=mono.getChannelData(0);
+    const [FMIN,FMAX]=RANGE_HZ[faixa]||RANGE_HZ.full;
+    const W=1024,HOP=256;
+    const tauMin=Math.floor(sr/FMAX), tauMax=Math.min(Math.floor(sr/FMIN),W-1);
+    const nF=Math.max(0,Math.floor((x.length-W-tauMax)/HOP));
+    const midis=new Float32Array(nF).fill(NaN);
+    let gE=0; for(let i=0;i<x.length;i+=97) gE+=x[i]*x[i];
+    const gate=Math.max(1e-6,(gE/(x.length/97))*0.05);
+    for(let f=0;f<nF;f++){
+      const s=f*HOP;
+      let e=0; for(let i=0;i<W;i++) e+=x[s+i]*x[s+i];
+      if(e/W>gate){
+        let cum=0,bt=-1,bv=1e9;
+        for(let tau=1;tau<=tauMax;tau++){
+          let sum=0; for(let i=0;i<W;i++){ const d=x[s+i]-x[s+i+tau]; sum+=d*d; }
+          cum+=sum; const cm=cum>0? sum*tau/cum:1;
+          if(tau>=tauMin){ if(cm<0.12){bt=tau;bv=cm;break;} if(cm<bv){bv=cm;bt=tau;} }
+        }
+        if(bt>0&&bv<0.3) midis[f]=69+12*Math.log2((sr/bt)/440);
+      }
+      if(f%400===0){ if(prog) prog(f/nF); await new Promise(r=>setTimeout(r,0)); }
+    }
+    const hopS=HOP/sr, sm=new Float32Array(nF).fill(NaN);
+    for(let i=0;i<nF;i++){ const w=[]; for(let k=-3;k<=3;k++){ const j=i+k; if(j>=0&&j<nF&&!isNaN(midis[j])) w.push(midis[j]); } if(w.length>=3){ w.sort((a,b)=>a-b); sm[i]=w[(w.length>>1)]; } }
+    const notas=[]; let cur=null;
+    const med=a=>{const b=[...a].sort((x,y)=>x-y);return b[b.length>>1];};
+    for(let i=0;i<nF;i++){ const v=sm[i],t=i*hopS;
+      if(isNaN(v)){ if(cur){notas.push(cur);cur=null;} continue; }
+      if(!cur) cur={s:t,e:t+hopS,p:[v]};
+      else if(Math.abs(v-med(cur.p))>0.6){ notas.push(cur); cur={s:t,e:t+hopS,p:[v]}; }
+      else { cur.p.push(v); cur.e=t+hopS; }
+    }
+    if(cur) notas.push(cur);
+    if(prog) prog(1);
+    return notas.filter(n=>n.e-n.s>=minDur).map(n=>({startTime:n.s, duration:n.e-n.s, pitch:Math.round(med(n.p)), velocity:90}));
+  }
+
+  async function converterPercussao(buffer, sens, prog){
+    const sr=22050;
+    let mono=buffer;
+    if(buffer.sampleRate!==sr || buffer.numberOfChannels>1){
+      const off=new OfflineAudioContext(1, Math.ceil(buffer.duration*sr), sr);
+      const s=off.createBufferSource(); s.buffer=buffer; s.connect(off.destination); s.start();
+      mono=await off.startRendering();
+    }
+    const x=mono.getChannelData(0);
+    const HOP=128, W=512, nF=Math.floor((x.length-W)/HOP);
+    const flux=new Float32Array(nF);
+    let prevLo=0,prevMid=0,prevHi=0;
+    const bandas=new Array(nF);
+    for(let f=0;f<nF;f++){
+      const s=f*HOP; let lo=0,mid=0,hi=0;
+      for(let i=0;i<W;i++){ const v=Math.abs(x[s+i]); const frac=i/W; if(frac<0.2) lo+=v; else if(frac<0.5) mid+=v; else hi+=v; }
+      bandas[f]={lo,mid,hi};
+      const on=Math.max(0,lo-prevLo)+Math.max(0,mid-prevMid)+Math.max(0,hi-prevHi);
+      flux[f]=on; prevLo=lo;prevMid=mid;prevHi=hi;
+      if(f%600===0){ if(prog) prog(f/nF*0.9); await new Promise(r=>setTimeout(r,0)); }
+    }
+    let mx=0; for(let i=0;i<nF;i++) mx=Math.max(mx,flux[i]);
+    const limiar=mx*(0.12+sens*0.3);
+    const hopS=HOP/sr, notas=[]; let ultimo=-1;
+    for(let f=1;f<nF-1;f++){
+      if(flux[f]>limiar && flux[f]>=flux[f-1] && flux[f]>flux[f+1] && (f-ultimo)>Math.round(0.05/hopS)){
+        const b=bandas[f];
+        let pitch=38;
+        if(b.lo>b.mid && b.lo>b.hi) pitch=36;
+        else if(b.hi>b.lo && b.hi>b.mid) pitch=42;
+        else pitch=38;
+        notas.push({startTime:f*hopS, duration:0.12, pitch, velocity:100});
+        ultimo=f;
+      }
+    }
+    if(prog) prog(1);
+    return notas;
+  }
+
+  // Escreve um Standard MIDI File tipo 1 (multi-trilha): cada pista de audio
+  // convertida vira uma trilha nomeada, para abrir no DAW com tracks separadas.
+  function escreverMidiMultiTrilha(trilhas, bpm){
+    const TPQ=480;
+    const secToTicks=(s)=> Math.max(0, Math.round(s*(bpm/60)*TPQ));
+    const bytes=[];
+    const push=(...b)=> b.forEach(x=>bytes.push(x&0xFF));
+    function vlq(v){ const buf=[v&0x7F]; v>>=7; while(v>0){ buf.unshift((v&0x7F)|0x80); v>>=7; } return buf; }
+
+    // header: formato 1, N trilhas (conta a trilha de tempo + as de nota)
+    const nTrk=trilhas.length+1;
+    push(0x4D,0x54,0x68,0x64, 0,0,0,6, 0,1, (nTrk>>8)&0xFF, nTrk&0xFF, (TPQ>>8)&0xFF, TPQ&0xFF);
+
+    function finalizarTrilha(trk){
+      // end of track
+      trk.push(0x00,0xFF,0x2F,0x00);
+      push(0x4D,0x54,0x72,0x6B,(trk.length>>24)&0xFF,(trk.length>>16)&0xFF,(trk.length>>8)&0xFF,trk.length&0xFF);
+      for(const b of trk) bytes.push(b&0xFF);
+    }
+
+    // trilha 1: tempo (conductor track)
+    const cond=[];
+    const mpq=Math.round(60000000/bpm);
+    cond.push(0x00,0xFF,0x51,0x03,(mpq>>16)&0xFF,(mpq>>8)&0xFF,mpq&0xFF);
+    finalizarTrilha(cond);
+
+    // demais trilhas: uma por pista
+    let canal=0;
+    for(const tr of trilhas){
+      const trk=[];
+      const add=(...b)=> b.forEach(x=>trk.push(x&0xFF));
+      // nome da trilha
+      const nome=(tr.nome||'Pista').slice(0,40);
+      add(0x00,0xFF,0x03,nome.length);
+      for(let i=0;i<nome.length;i++) add(nome.charCodeAt(i)&0x7F);
+      // eventos
+      const ev=[];
+      for(const n of tr.notas){
+        const on=secToTicks(n.startTime);
+        const off=secToTicks(n.startTime+Math.max(0.03,n.duration||0.12));
+        const vel=Math.max(1,Math.min(127,Math.round(n.velocity||90)));
+        const pitch=Math.max(0,Math.min(127,Math.round(n.pitch)));
+        ev.push({tick:on,on:true,pitch,vel});
+        ev.push({tick:off,on:false,pitch,vel:0});
+      }
+      ev.sort((a,b)=> a.tick-b.tick || (a.on?1:0)-(b.on?1:0));
+      const ch=canal & 0x0F;
+      let prev=0;
+      for(const e of ev){
+        const delta=e.tick-prev; prev=e.tick;
+        vlq(delta).forEach(x=>add(x));
+        if(e.on) add(0x90|ch, e.pitch, e.vel);
+        else add(0x80|ch, e.pitch, 0);
+      }
+      finalizarTrilha(trk);
+      canal++;
+    }
+    return new Uint8Array(bytes);
+  }
+
+  function exportarMidi(t){
+    if(!t.convResult || !t.convResult.notas || !t.convResult.notas.length){
+      t.el.convStatus.textContent='Converta a pista primeiro para gerar as notas.';
+      return;
+    }
+    const notas=t.convResult.notas;
+    const bpm=parseFloat(mBpm.value)||120;
+    const TPQ=480;  // ticks por semínima
+    const secToTicks=(s)=> Math.max(0, Math.round(s*(bpm/60)*TPQ));
+
+    // eventos note-on/note-off ordenados por tick
+    const ev=[];
+    for(const n of notas){
+      const on=secToTicks(n.startTime);
+      const off=secToTicks(n.startTime + Math.max(0.03, n.duration||0.12));
+      const vel=Math.max(1,Math.min(127, Math.round(n.velocity||90)));
+      const pitch=Math.max(0,Math.min(127, Math.round(n.pitch)));
+      ev.push({tick:on, on:true, pitch, vel});
+      ev.push({tick:off, on:false, pitch, vel:0});
+    }
+    ev.sort((a,b)=> a.tick-b.tick || (a.on?1:0)-(b.on?1:0));
+
+    // helpers de bytes
+    const bytes=[];
+    const push=(...b)=> b.forEach(x=>bytes.push(x&0xFF));
+    function vlq(v){ // variable-length quantity
+      const buf=[v&0x7F]; v>>=7;
+      while(v>0){ buf.unshift((v&0x7F)|0x80); v>>=7; }
+      return buf;
+    }
+    // --- header chunk ---
+    push(0x4D,0x54,0x68,0x64, 0,0,0,6, 0,0, 0,1, (TPQ>>8)&0xFF, TPQ&0xFF);
+
+    // --- track chunk ---
+    const trk=[];
+    const add=(...b)=> b.forEach(x=>trk.push(x&0xFF));
+    // tempo meta (microssegundos por semínima)
+    const mpq=Math.round(60000000/bpm);
+    add(0x00, 0xFF, 0x51, 0x03, (mpq>>16)&0xFF, (mpq>>8)&0xFF, mpq&0xFF);
+    // nome da faixa
+    const nome=(t.name||'Orivox').slice(0,40);
+    add(0x00, 0xFF, 0x03, nome.length);
+    for(let i=0;i<nome.length;i++) add(nome.charCodeAt(i)&0x7F);
+    // eventos de nota
+    let prev=0;
+    for(const e of ev){
+      const delta=e.tick-prev; prev=e.tick;
+      vlq(delta).forEach(x=>add(x));
+      if(e.on) add(0x90, e.pitch, e.vel);
+      else add(0x80, e.pitch, 0);
+    }
+    // end of track
+    add(0x00, 0xFF, 0x2F, 0x00);
+
+    // escrever o track chunk com seu tamanho
+    push(0x4D,0x54,0x72,0x6B, (trk.length>>24)&0xFF,(trk.length>>16)&0xFF,(trk.length>>8)&0xFF,trk.length&0xFF);
+    for(const b of trk) bytes.push(b);
+
+    // baixar
+    const blob=new Blob([new Uint8Array(bytes)], {type:'audio/midi'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=(t.name||'resound').replace(/[^\w.-]+/g,'_')+'.mid';
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 500);
+    t.el.convStatus.textContent='MIDI exportado ('+notas.length+' notas). Abra no seu DAW.';
+  }
+
+  function enviarParaPartitura(t){
+    if(!t.convResult) return;
+    const [num,den]=mMeter.value.split('/').map(Number);
+    const payload={
+      trackId:'trk_'+t.id,
+      trackName:t.name,
+      sourceType:t.convResult.modo==='percussion'?'percussion':'melodic',
+      midiNotes:t.convResult.notas.map(n=>({pitch:n.pitch, startTime:n.startTime, duration:n.duration, velocity:n.velocity||90})),
+      tempoMap:{
+        bpm:parseFloat(mBpm.value)||120,
+        timeSignature:mMeter.value,
+        beatGrid:(METRO.beats||[]).slice(),
+        downbeats:[]
+      },
+      conversionParams:{
+        model:t.convResult.modo==='percussion'?'onset-detection':((typeof BasicPitch!=='undefined'||typeof basicPitch!=='undefined')?'basic-pitch':'yin-interno'),
+        onsetThreshold:parseFloat(t.el.convSens.value),
+        minNoteDuration:parseFloat(t.el.convMindur.value),
+        voicing:'top'
+      }
+    };
+    try{
+      sessionStorage.setItem('resound_midi_transfer', JSON.stringify(payload));
+      t.el.convStatus.textContent='Abrindo a Partitura com "'+ (t.name||'pista') +'"...';
+      window.location.href='partitura.html?from=player';
+    }catch(e){
+      t.el.convStatus.textContent='Não consegui abrir a Partitura (armazenamento cheio?).';
+    }
+  }
+
+  function computePeaks(t,w){
+    const ch=t.buffer.getChannelData(0);
+    const step=Math.max(1,Math.floor(ch.length/w));
+    const peaks=new Array(w);
+    for(let i=0;i<w;i++){
+      let mn=1,mx=-1; const s=i*step, e=Math.min(ch.length,s+step);
+      for(let j=s;j<e;j+=4){ const v=ch[j]; if(v<mn)mn=v; if(v>mx)mx=v; }
+      peaks[i]=[mn,mx];
+    }
+    return peaks;
+  }
+  function drawWave(t,posSec){
+    const cv=t.el.wave; if(!cv) return;
+    const w=cv.clientWidth||320, h=56;
+    if(cv.width!==w||cv.height!==h){ cv.width=w; cv.height=h; t.peaks=null; t.waveCache=null; }
+    if(!t.peaks) t.peaks=computePeaks(t,w);
+
+    // CACHE DA FORMA DE ONDA (ganho grande de desempenho).
+    // A onda NAO muda durante a reproducao: so o playhead se move. Antes,
+    // redesenhavamos a onda inteira a cada quadro (8 pistas x ~500px x 60fps =
+    // 240 mil operacoes de desenho por segundo). Agora ela e desenhada UMA VEZ
+    // num canvas em memoria e apenas copiada (1 operacao por pista por quadro).
+    // Isso libera CPU para o audio, que e o que nao pode falhar.
+    if(!t.waveCache || t.waveCacheW!==w || t.waveCacheCor!==t.color){
+      const oc=document.createElement('canvas'); oc.width=w; oc.height=h;
+      const og=oc.getContext('2d');
+      const mid=h/2, esc=mid*0.92;
+      og.fillStyle=t.color; og.globalAlpha=0.85;
+      for(let i=0;i<w;i++){
+        const p=t.peaks[i]; if(!p) continue;
+        const yTop=mid-p[1]*esc, yBot=mid-p[0]*esc;
+        og.fillRect(i, yTop, 1, Math.max(1,yBot-yTop));
+      }
+      og.globalAlpha=1;
+      t.waveCache=oc; t.waveCacheW=w; t.waveCacheCor=t.color;
+    }
+
+    const g=cv.getContext('2d');
+    g.clearRect(0,0,w,h);
+    if(state.loopA!==null && state.loopB!==null && state.duration){
+      const xA=(state.loopA/state.duration)*w, xB=(state.loopB/state.duration)*w;
+      g.fillStyle=state.loopOn? 'rgba(42,212,200,0.22)':'rgba(42,212,200,0.10)';
+      g.fillRect(Math.min(xA,xB),0,Math.abs(xB-xA),h);
+    }
+    g.drawImage(t.waveCache,0,0);          // a onda pronta, de uma vez so
+    const frac=state.duration? Math.min(1,Math.max(0,posSec)/state.duration):0;
+    g.fillStyle='#C7212E';
+    g.fillRect(Math.round(frac*w)-1,0,2,h);
+  }
+  function drawAllWaves(pos){ state.tracks.forEach(t=>drawWave(t,pos)); }
+  function seekTo(sec){
+    sec=Math.max(0,Math.min(sec,state.duration||0));
+    const was=state.playing;
+    if(was) pausePlayback();
+    state.offset=sec;
+    if(was) startPlayback(true); else updateTimeUI();
+  }
+  let waveResize=null;
+  window.addEventListener('resize', ()=>{
+    clearTimeout(waveResize);
+    waveResize=setTimeout(()=>{ state.tracks.forEach(t=>{ t.peaks=null; t.waveCache=null; }); drawAllWaves(currentPos()); },150);
+  });
+
+  function refreshLayout(){
+    const has = state.tracks.length>0;
+    transport.classList.toggle('visible',has);
+    consoleEl.classList.toggle('visible',has);
+    exporter.classList.toggle('visible',has);
+    emptyNote.style.display = has? 'none':'block';
+    metroEl.classList.toggle('visible',has);
+    chordsEl.classList.toggle('visible',has);
+    if(typeof estimarTamanho==='function') estimarTamanho();
+    sepCard.classList.toggle('visible', state.tracks.length===1 && !state.sepDismissed);
+    updateTimeUI();
+  }
+
+  sepDismiss.addEventListener('click', ()=>{ state.sepDismissed=true; sepCard.classList.remove('visible'); });
+
+  /* ---------------- Solo / mudo / ganho ---------------- */
+  function audible(t){
+    const anySolo = state.tracks.some(x=>x.solo);
+    if(t.muted) return false;
+    if(anySolo && !t.solo) return false;
+    return true;
+  }
+  function applyGains(){
+    state.tracks.forEach(t=>{
+      if(t.gain) t.gain.gain.setTargetAtTime(audible(t)? t.volume:0, state.ctx.currentTime, .015);
+      t.el.strip.style.opacity = audible(t)? '1':'0.55';
+    });
+  }
+  function updateLoopUI(){
+    const A=state.loopA, B=state.loopB;
+    $('loopInfo').textContent = (A!==null? 'A '+fmtTime(A):'')+(B!==null? ' · B '+fmtTime(B):'');
+    const tg=$('loopToggle');
+    tg.textContent = state.loopOn? 'Loop: LIGADO':'Loop: desligado';
+    tg.classList.toggle('solo-on', state.loopOn);
+    drawAllWaves(Math.max(0,currentPos()));
+  }
+  $('loopA').addEventListener('click', ()=>{ state.loopA=Math.max(0,currentPos()); if(state.loopB!==null&&state.loopB<=state.loopA) state.loopB=null; updateLoopUI(); });
+  $('loopB').addEventListener('click', ()=>{ const p=Math.max(0,currentPos()); if(state.loopA===null||p>state.loopA){ state.loopB=p; } updateLoopUI(); });
+  $('loopToggle').addEventListener('click', ()=>{
+    if(state.loopA===null||state.loopB===null){ $('loopInfo').textContent='Marque A e depois B primeiro.'; return; }
+    state.loopOn=!state.loopOn; updateLoopUI();
+  });
+  $('loopClear').addEventListener('click', ()=>{ state.loopA=null; state.loopB=null; state.loopOn=false; updateLoopUI(); });
+  masterVol.addEventListener('input', ()=>{
+    if(state.master) state.master.gain.setTargetAtTime(masterVol.value/100, state.ctx.currentTime, .015);
+  });
+
+  /* ---------------- Reprodução ---------------- */
+  playBtn.addEventListener('click', ()=>{
+    if(!state.tracks.length) return;
+    if(state.playing){
+      pausePlayback();
+      if(typeof SALA!=='undefined' && SALA.ligada && !SALA.aplicando) salaEnviar({tipo:'pausa'});
+    } else {
+      // Sala ligada: agenda o play num instante futuro comum a todos, para o
+      // audio cair junto em cada aparelho (sincronismo por relogio).
+      if(typeof SALA!=='undefined' && SALA.ligada && !SALA.aplicando){
+        const quando = Date.now() + SALA.offsetRelogio + 300;
+        salaEnviar({tipo:'play', quando:quando, pos:state.offset});
+        const esperar = Math.max(0, quando - (Date.now()+SALA.offsetRelogio));
+        setTimeout(()=>{ if(!state.playing) startPlayback(true); }, esperar);
+      } else {
+        startPlayback();
+      }
+    }
+  });
+  stopBtn.addEventListener('click', ()=>{
+    pausePlayback(); state.offset=0; updateTimeUI();
+    if(typeof SALA!=='undefined' && SALA.ligada && !SALA.aplicando) salaEnviar({tipo:'stop'});
+  });
+
+  function startPlayback(skipCount){
+    ensureCtx();
+    if(state.offset>=state.duration) state.offset=0;
+    const temContagem = (mMode.value!=='off' && state.offset<0.01 && !skipCount);
+    const countSec = temContagem? metroCountSec() : 0;
+    // Fase = instante do 1º tempo real dentro do áudio (ex: 0,43s de cabeça).
+    const fase = Math.max(0, parseFloat(mPhase.value)||0);
+    // Estilo da contagem: 'emenda' faz a música soar a partir do 1º tempo detectado
+    // (contagem cola na 1ª batida); 'zero' deixa a música tocar do início do arquivo
+    // (mais previsível para músicas que começam suave, sugestão do usuário).
+    const estiloZero = (mCountStyle && mCountStyle.value==='zero');
+    const inicioAudio = (temContagem && fase>0.02 && !estiloZero)? fase : state.offset;
+    const clock0 = state.ctx.currentTime + 0.06 + countSec;   // instante em que a 1ª batida soa
+    // ALINHAMENTO DA ENTRADA: quando a música não começa "na cara" (tem cabeça,
+    // anacruse ou dedilhado antes do tempo 1), ela deve COMEÇAR A SOAR durante os
+    // últimos tempos da contagem, para que seu 1º tempo real caia exatamente onde
+    // a contagem termina. Assim a música toca inteira (nada é cortado) E entra no
+    // tempo certo, que é como se toca ao vivo com os músicos.
+    const alinhar = temContagem && estiloZero && fase>0.02;
+    const startAudio = alinhar
+      ? Math.max(state.ctx.currentTime+0.02, clock0 - fase)   // soa antes do fim da contagem
+      : clock0;
+    // posição real da música no instante clock0 (o fim da contagem)
+    const posEmClock0 = alinhar ? (clock0 - startAudio) : inicioAudio;
+    state.tracks.forEach(t=>{
+      const src = state.ctx.createBufferSource();
+      src.buffer = t.buffer;
+      const g = state.ctx.createGain();
+      g.gain.value = audible(t)? t.volume:0;
+      const an = state.ctx.createAnalyser();
+      an.fftSize = 512;
+      const pn = state.ctx.createStereoPanner? state.ctx.createStereoPanner() : null;
+      if(pn){ pn.pan.value=t.pan/100; src.connect(g); g.connect(pn); pn.connect(an); }
+      else { src.connect(g); g.connect(an); }
+      an.connect(state.master);
+      t.node=src; t.gain=g; t.analyser=an; t.panner=pn;
+      if(inicioAudio < t.buffer.duration) src.start(startAudio, inicioAudio);
+    });
+    METRO.gain = state.ctx.createGain();
+    METRO.gain.gain.value = mVol.value/100;
+    // panner do clique: roteia L/R sem tocar nas pistas nem na transcrição.
+    METRO.panner = state.ctx.createStereoPanner? state.ctx.createStereoPanner() : null;
+    if(METRO.panner){
+      METRO.panner.pan.value = (parseInt(mPan.value,10)||0)/100;
+      METRO.gain.connect(METRO.panner); METRO.panner.connect(state.master);
+    } else {
+      METRO.gain.connect(state.master);
+    }
+    METRO.nodes = scheduleClicks(state.ctx, METRO.gain, clock0, countSec, posEmClock0, state.duration);
+    // O relógio de posição parte do ponto real onde a música começou a soar
+    state.startedAt = clock0;
+    state.offsetSoando = posEmClock0;
+    state.playing = true;
+    playBtn.textContent='❚❚';
+    tick();
+  }
+
+  function pausePlayback(){
+    if(state.playing){
+      state.offset = Math.min(state.offset + (state.ctx.currentTime - state.startedAt), state.duration);
+    }
+    METRO.nodes.forEach(n=>{ try{n.stop();}catch(e){} });
+    METRO.nodes=[];
+    state.tracks.forEach(t=>{
+      try{ t.node && t.node.stop(); }catch(e){}
+      t.node=null; t.gain=null; t.analyser=null; t.panner=null;
+      t.el.meter.style.width='0%';
+    });
+    state.playing=false;
+    playBtn.textContent='▶';
+    cancelAnimationFrame(state.raf);
+    updateTimeUI();
+  }
+
+  /* ---------------- Linha do tempo ---------------- */
+  seek.addEventListener('input', ()=>{ state.seeking=true;
+    const pos = (seek.value/1000)*state.duration;
+    timecode.textContent = fmtTime(pos)+' / '+fmtTime(state.duration);
+  });
+  seek.addEventListener('change', ()=>{
+    state.seeking=false;
+    seekTo((seek.value/1000)*state.duration);
+    if(typeof SALA!=='undefined' && SALA.ligada && !SALA.aplicando) salaEnviar({tipo:'seek', pos:(seek.value/1000)*state.duration});
+  });
+
+  function currentPos(){
+    if(!state.playing) return state.offset;
+    const base = (state.offsetSoando!==undefined)? state.offsetSoando : state.offset;
+    // latência de saída: tempo entre o Web Audio processar e o som chegar ao
+    // ouvido. Subtrair isso alinha o playhead com o que a pessoa OUVE (senão o
+    // destaque do acorde fica adiantado em relação ao som).
+    const lat = (state.ctx.outputLatency || state.ctx.baseLatency || 0);
+    return Math.min(Math.max(base, base + (state.ctx.currentTime-state.startedAt) - lat), state.duration);
+  }
+  function updateTimeUI(){
+    const pos = currentPos();
+    if(!state.seeking) seek.value = state.duration? Math.round((Math.max(0,pos)/state.duration)*1000):0;
+    timecode.textContent = fmtTime(Math.max(0,pos))+' / '+fmtTime(state.duration);
+    drawAllWaves(Math.max(0,pos));
+  }
+  function tick(){
+    if(!state.playing) return;
+    updateTimeUI();
+    // Medidores
+    const data = new Uint8Array(256);
+    state.tracks.forEach(t=>{
+      if(!t.analyser){ t.el.meter.style.width='0%'; return; }
+      t.analyser.getByteTimeDomainData(data);
+      let sum=0;
+      for(let i=0;i<data.length;i++){ const v=(data[i]-128)/128; sum+=v*v; }
+      const rms = Math.sqrt(sum/data.length);
+      t.el.meter.style.width = Math.min(100, Math.round(rms*260))+'%';
+    });
+    if(CH.segments){
+      const pos=Math.max(0,currentPos());
+      let lab='';
+      for(const s of CH.segments){ if(pos>=s.t0 && pos<s.t1){ lab=s.label; break; } }
+      if(chordNow.textContent!==lab) chordNow.textContent=lab;
+      atualizarFaixaAcordes(pos);
+    }
+    if(state.loopOn && state.loopA!==null && state.loopB!==null && state.loopB>state.loopA && currentPos()>=state.loopB-0.02){
+      pausePlayback(); state.offset=state.loopA; startPlayback(true); return;
+    }
+    if(currentPos()>=state.duration){ pausePlayback(); state.offset=0; updateTimeUI(); return; }
+    state.raf = requestAnimationFrame(tick);
+  }
+
+  function fmtTime(s){
+    if(!isFinite(s)) s=0;
+    const m=Math.floor(s/60), sec=(s%60);
+    return String(m).padStart(2,'0')+':'+ (sec<10?'0':'') + sec.toFixed(1);
+  }
+  function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  /* ---------------- Exportação WAV ---------------- */
+  const QUALIDADES={
+    wav:[{v:'std', txt:'Padrão · 44.1 kHz / 16-bit', nota:'compatível com tudo, arquivo menor'},
+         {v:'hi',  txt:'Excelência · 48 kHz / 24-bit', nota:'qualidade de estúdio, arquivo maior'}],
+    mp3:[{v:'192', txt:'Padrão · 192 kbps', nota:'ótimo equilíbrio, arquivo pequeno'},
+         {v:'320', txt:'Excelência · 320 kbps', nota:'máxima qualidade MP3, arquivo maior'}]
+  };
+  function popularQualidade(){
+    // MIDI nao tem "qualidade" de audio: desabilita o seletor e mostra nota.
+    if(expFormat.value==='midi'){
+      expQuality.innerHTML='<option>Notas (uma trilha por pista)</option>';
+      expQuality.disabled=true;
+      if(expSize) expSize.textContent='Converte cada pista audivel em notas. Melhor com linhas solo (voz, baixo, sax).';
+      return;
+    }
+    expQuality.disabled=false;
+    const opts=QUALIDADES[expFormat.value];
+    expQuality.innerHTML='';
+    opts.forEach(o=>{ const el=document.createElement('option'); el.value=o.v; el.textContent=o.txt; expQuality.appendChild(el); });
+    estimarTamanho();
+  }
+  function estimarTamanho(){
+    if(!state.duration){ expSize.textContent=''; return; }
+    const countSecE = mMode.value!=='off'? metroCountSec() : 0;
+    const dur=state.duration+countSecE;
+    let bytes=0;
+    if(expFormat.value==='wav'){
+      const sr=expQuality.value==='hi'?48000:44100, bd=expQuality.value==='hi'?3:2;
+      bytes=dur*sr*2*bd+44;
+    } else {
+      const kbps=parseInt(expQuality.value,10)||192;
+      bytes=dur*kbps*1000/8;
+    }
+    const mb=bytes/1048576;
+    const o=QUALIDADES[expFormat.value].find(x=>x.v===expQuality.value);
+    expSize.textContent='~'+(mb<1? Math.round(mb*1024)+' KB' : mb.toFixed(1)+' MB')+(o? ' · '+o.nota:'');
+  }
+  expFormat.addEventListener('change', popularQualidade);
+  expQuality.addEventListener('change', estimarTamanho);
+  popularQualidade();
+
+  function floatParaInt16(v){ v=Math.max(-1,Math.min(1,v)); return v<0? v*0x8000 : v*0x7FFF; }
+
+  async function renderMix(sampleRate){
+    const active = state.tracks.filter(audible);
+    const countSecE = mMode.value!=='off'? metroCountSec() : 0;
+    // ALINHAMENTO DA ENTRADA no arquivo exportado (mesmo critério do play):
+    // se a música tem cabeça (anacruse/dedilhado antes do tempo 1), ela começa a
+    // soar antes do fim da contagem, para o 1º tempo real cair exatamente onde a
+    // contagem termina. É o que vai para o palco, então precisa entrar certo.
+    const faseE = Math.max(0, parseFloat(mPhase.value)||0);
+    const alinharE = (countSecE>0 && mCountStyle && mCountStyle.value==='zero' && faseE>0.02);
+    const startE = alinharE ? Math.max(0, countSecE - faseE) : countSecE;
+    const len = Math.ceil((state.duration+countSecE)*sampleRate);
+    const off = new OfflineAudioContext(2, len, sampleRate);
+    active.forEach(t=>{
+      const src=off.createBufferSource(); src.buffer=t.buffer;
+      const g=off.createGain(); g.gain.value=t.volume*(masterVol.value/100);
+      const pn=off.createStereoPanner? off.createStereoPanner():null;
+      if(pn){ pn.pan.value=t.pan/100; src.connect(g); g.connect(pn); pn.connect(off.destination); }
+      else { src.connect(g); g.connect(off.destination); }
+      src.start(startE);
+    });
+    if(mMode.value!=='off'){
+      const mg=off.createGain();
+      mg.gain.value=(mVol.value/100)*(masterVol.value/100);
+      mg.connect(off.destination);
+      scheduleClicks(off, mg, countSecE, countSecE, (alinharE? faseE : 0), state.duration);
+    }
+    return off.startRendering();
+  }
+
+  function encodeMp3(buffer, kbps){
+    if(typeof lamejs==='undefined') throw new Error('lamejs indisponível');
+    const ch=buffer.numberOfChannels>1?2:1, sr=buffer.sampleRate;
+    const enc=new lamejs.Mp3Encoder(ch, sr, kbps);
+    const L=buffer.getChannelData(0);
+    const R=ch>1? buffer.getChannelData(1):null;
+    const n=buffer.length, bloco=1152, dados=[];
+    const li=new Int16Array(bloco), ri=ch>1? new Int16Array(bloco):null;
+    for(let i=0;i<n;i+=bloco){
+      const fim=Math.min(i+bloco,n), m=fim-i;
+      for(let j=0;j<m;j++){ li[j]=floatParaInt16(L[i+j]); if(ri) ri[j]=floatParaInt16(R[i+j]); }
+      const sub_l=m<bloco? li.subarray(0,m):li;
+      const sub_r=ri? (m<bloco? ri.subarray(0,m):ri):undefined;
+      const buf=ch>1? enc.encodeBuffer(sub_l,sub_r): enc.encodeBuffer(sub_l);
+      if(buf.length) dados.push(new Int8Array(buf));
+    }
+    const fin=enc.flush(); if(fin.length) dados.push(new Int8Array(fin));
+    return new Blob(dados,{type:'audio/mp3'});
+  }
+
+  exportWav.addEventListener('click', async ()=>{
+    const active = state.tracks.filter(audible);
+    if(!active.length){ exportStatus.textContent='Nenhuma pista audível: reative alguma antes de exportar.'; return; }
+    const fmt=expFormat.value, qual=expQuality.value;
+    exportWav.disabled=true;
+
+    // ===== MIDI: converte cada pista audivel numa trilha e monta um .mid tipo 1 =====
+    if(fmt==='midi'){
+      try{
+        exportStatus.textContent='Convertendo pistas em notas (pode levar alguns segundos)...';
+        await new Promise(r=>setTimeout(r,30));
+        const trilhas=[];
+        for(const t of active){
+          exportStatus.textContent='Convertendo: '+(t.name||'pista')+'...';
+          await new Promise(r=>setTimeout(r,10));
+          // reaproveita a conversao existente; se a pista ja foi convertida, usa o cache
+          if(!t.convResult || !t.convResult.notas){
+            await converterPista(t);
+          }
+          if(t.convResult && t.convResult.notas && t.convResult.notas.length){
+            trilhas.push({nome:t.name||'Pista', notas:t.convResult.notas});
+          }
+        }
+        if(!trilhas.length){ exportStatus.textContent='Nenhuma nota detectada nas pistas. A conversao MIDI funciona melhor com pistas de uma linha so (voz, baixo, sax).'; exportWav.disabled=false; return; }
+        const bpm=parseFloat(mBpm.value)||120;
+        const midiBytes=escreverMidiMultiTrilha(trilhas, bpm);
+        const blob=new Blob([midiBytes], {type:'audio/midi'});
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement('a');
+        a.href=url; a.download='Orivox_mix.mid'; a.click();
+        setTimeout(()=>URL.revokeObjectURL(url), 4000);
+        exportStatus.textContent='MIDI exportado ('+trilhas.length+' trilha(s), abra no seu DAW). Cada pista virou uma track separada.';
+      }catch(err){
+        exportStatus.textContent='Falha ao gerar MIDI. A conversao funciona melhor com pistas de uma linha melodica.';
+      }
+      exportWav.disabled=false;
+      return;
+    }
+
+    exportStatus.textContent='Renderizando seu mix...';
+    try{
+      const sr = fmt==='wav' && qual==='hi'? 48000 : 44100;
+      const bits = fmt==='wav' && qual==='hi'? 24 : 16;
+      const rendered = await renderMix(sr);
+      let blob, ext;
+      if(fmt==='mp3'){
+        exportStatus.textContent='Codificando MP3 (pode levar alguns segundos)...';
+        await new Promise(r=>setTimeout(r,30));
+        blob = encodeMp3(rendered, parseInt(qual,10)); ext='mp3';
+      } else {
+        blob = encodeWav(rendered, bits); ext='wav';
+      }
+      const url = URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url; a.download='Orivox_mix.'+ext; a.click();
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+      const mb=blob.size/1048576;
+      exportStatus.textContent='Mix exportado ('+(mb<1? Math.round(blob.size/1024)+' KB': mb.toFixed(1)+' MB')+')! Confira seus downloads.';
+    }catch(err){
+      exportStatus.textContent = fmt==='mp3'? 'Falha ao gerar MP3. Tente WAV ou recarregue a página.' : 'A exportação falhou. Tente novamente.';
+    }
+    exportWav.disabled=false;
+  });
+
+  function encodeWav(buffer, bitDepth){
+    bitDepth=bitDepth||16;
+    const numCh=buffer.numberOfChannels, sr=buffer.sampleRate, len=buffer.length;
+    const bytesPerSample=bitDepth/8, blockAlign=numCh*bytesPerSample;
+    const dataSize=len*blockAlign;
+    const ab=new ArrayBuffer(44+dataSize); const dv=new DataView(ab);
+    let p=0;
+    function ws(s){ for(let i=0;i<s.length;i++) dv.setUint8(p++, s.charCodeAt(i)); }
+    function u32(v){ dv.setUint32(p,v,true); p+=4; }
+    function u16(v){ dv.setUint16(p,v,true); p+=2; }
+    ws('RIFF'); u32(36+dataSize); ws('WAVE'); ws('fmt '); u32(16); u16(1); u16(numCh);
+    u32(sr); u32(sr*blockAlign); u16(blockAlign); u16(bitDepth); ws('data'); u32(dataSize);
+    const chans=[]; for(let c=0;c<numCh;c++) chans.push(buffer.getChannelData(c));
+    for(let i=0;i<len;i++){
+      for(let c=0;c<numCh;c++){
+        let v=Math.max(-1,Math.min(1,chans[c][i]));
+        if(bitDepth===24){
+          const iv=Math.round(v<0? v*0x800000 : v*0x7FFFFF);
+          dv.setUint8(p++, iv&0xFF); dv.setUint8(p++, (iv>>8)&0xFF); dv.setUint8(p++, (iv>>16)&0xFF);
+        } else {
+          dv.setInt16(p, v<0? v*0x8000 : v*0x7FFF, true); p+=2;
+        }
+      }
+    }
+    return new Blob([ab],{type:'audio/wav'});
+  }
+
+  /* ---------------- Atalhos de teclado ---------------- */
+  document.addEventListener('keydown', e=>{
+    if(e.target.matches('input[type=text],input.strip-name')) return;
+    if(e.code==='Space'){ e.preventDefault(); playBtn.click(); }
+  });
+
+  /* ============================================================
+     SALA DE ENSAIO COMPARTILHADA (Caminho A)
+     Camada opcional e isolada. Nao altera nada do funcionamento
+     de quem usa o Orivox sozinho: so age quando uma sala e criada.
+
+     Como funciona:
+     - WebRTC via PeerJS (usa o "cartorio" publico gratuito do PeerJS
+       so para os navegadores se acharem; nenhum servidor do autor).
+     - O AUDIO nunca trafega: cada musico importa a mesma musica no
+       proprio aparelho. So os COMANDOS viajam (play, pausa, volume,
+       mudo, solo, posicao), que sao mensagens minusculas.
+     - O play e sincronizado pelo RELOGIO: o anfitriao manda "comece
+       em tal instante", e cada aparelho parte do seu proprio audio.
+     - Reconexao: atualizar a pagina sai da sala; reabrir o link
+       (ou digitar o codigo) reconecta e recebe o estado atual.
+     ============================================================ */
+  const SALA = {
+    peer:null, host:false, conns:[], id:null,
+    ligada:false, aplicando:false, offsetRelogio:0, melhorRtt:undefined
+  };
+
+  function salaMsg(txt, on){
+    const s=$('salaStatus'); if(!s) return;
+    s.textContent = txt;
+    s.classList.toggle('on', !!on);
+  }
+
+  // Estado do mix que a sala sincroniza (leve: so numeros e flags)
+  function coletarEstado(){
+    return {
+      tipo:'estado',
+      tracks: state.tracks.map(t=>({ nome:t.name, vol:t.volume, mute:t.muted, solo:t.solo, pan:t.pan })),
+      master: parseInt(masterVol.value,10),
+      tocando: state.playing,
+      pos: currentPos()
+    };
+  }
+
+  // Aplica um estado recebido SEM disparar reenvio (evita eco infinito)
+  function aplicarEstado(st){
+    SALA.aplicando = true;
+    try{
+      if(typeof st.master==='number'){ masterVol.value=st.master; if(state.master) state.master.gain.value=st.master/100; }
+      // casa por indice: todos importaram a mesma musica, mesma ordem
+      st.tracks.forEach((info,i)=>{
+        const t=state.tracks[i]; if(!t) return;
+        t.volume=info.vol; t.muted=info.mute; t.solo=info.solo;
+        if(t.el){
+          if(t.el.vol){ t.el.vol.value=Math.round(info.vol*100); if(t.el.volVal) t.el.volVal.textContent=Math.round(info.vol*100)+'%'; }
+          if(t.el.mute){ t.el.mute.classList.toggle('mute-on',t.muted); }
+          if(t.el.solo){ t.el.solo.classList.toggle('solo-on',t.solo); }
+        }
+      });
+      if(typeof applyGains==='function') applyGains();
+    }catch(e){}
+    SALA.aplicando = false;
+  }
+
+  // Envia uma mensagem a todos os conectados
+  function salaEnviar(msg){
+    if(!SALA.ligada){ return; }
+    const txt=JSON.stringify(msg);
+    let enviados=0, pendentes=0;
+    SALA.conns.forEach(c=>{
+      try{
+        if(c.open){ c.send(txt); enviados++; }
+        else { pendentes++; }
+      }catch(e){}
+    });
+    salaLog('enviei "'+msg.tipo+'" para '+enviados+' (aguardando '+pendentes+')');
+    // se algum par ainda nao abriu, reenvia so para eles em 250ms
+    if(pendentes>0){
+      setTimeout(()=>{
+        SALA.conns.forEach(c=>{ try{ if(c.open) c.send(txt); }catch(e){} });
+      }, 250);
+    }
+  }
+
+  // Log VISIVEL na tela (diagnostico): mostra os ultimos eventos da sala.
+  function salaLog(txt){
+    try{
+      const el=$('salaLog'); if(!el) return;
+      const linha=new Date().toLocaleTimeString().split(' ')[0]+'  '+txt;
+      SALA._log = (SALA._log||[]);
+      SALA._log.unshift(linha);
+      if(SALA._log.length>12) SALA._log.pop();
+      el.textContent = SALA._log.join('\n');
+    }catch(e){}
+  }
+
+  // Trata uma mensagem recebida
+  function salaReceber(msg, origem){
+    // --- sincronizacao de relogio (ping-pong) ---
+    if(msg.tipo==='ping'){ try{ origem.send(JSON.stringify({tipo:'pong', t0:msg.t0, tHost:Date.now()})); }catch(e){} return; }
+    if(msg.tipo==='pong'){
+      const rtt = Date.now() - msg.t0;             // ida e volta desta amostra
+      // guarda a amostra de MENOR rtt: e a menos contaminada por congestionamento,
+      // e a que da a estimativa de relogio mais confiavel (tecnica padrao de NTP).
+      if(SALA.melhorRtt===undefined || rtt < SALA.melhorRtt){
+        SALA.melhorRtt = rtt;
+        const tLocalEstimado = msg.tHost + rtt/2;
+        SALA.offsetRelogio = tLocalEstimado - Date.now();
+      }
+      return;
+    }
+    if(msg.tipo==='estado'){ aplicarEstado(msg); return; }
+    if(msg.tipo==='play'){
+      // sincronismo por relogio: comeca quando o relogio local alcanca "quando"
+      const agora = Date.now() + SALA.offsetRelogio;
+      const esperar = Math.max(0, msg.quando - agora);
+      SALA.aplicando=true;
+      state.offset = msg.pos||0;
+      setTimeout(()=>{ if(!state.playing && state.tracks.length){ startPlayback(true); } SALA.aplicando=false; }, esperar);
+      return;
+    }
+    if(msg.tipo==='pausa'){ SALA.aplicando=true; if(state.playing) pausePlayback(); if(typeof updateTimeUI==='function') updateTimeUI(); SALA.aplicando=false; return; }
+    if(msg.tipo==='stop'){ SALA.aplicando=true; if(state.playing) pausePlayback(); state.offset=0; if(typeof updateTimeUI==='function') updateTimeUI(); SALA.aplicando=false; return; }
+    if(msg.tipo==='seek'){ SALA.aplicando=true; if(typeof seekTo==='function') seekTo(msg.pos); SALA.aplicando=false; return; }
+    if(msg.tipo==='pedeEstado'){ if(SALA.host && origem){ try{ origem.send(JSON.stringify(coletarEstado())); }catch(e){} } return; }
+    if(msg.tipo==='ola'){ atualizarPeers(); return; }
+  }
+
+  function atualizarPeers(){
+    const el=$('salaPeers'); if(!el) return;
+    const n=SALA.conns.filter(c=>c.open).length;
+    el.textContent = SALA.host
+      ? ('Você (anfitrião) · '+n+' conectado'+(n===1?'':'s'))
+      : ('Conectado à sala'+(n>0? ' · '+(n)+' par(es)':''));
+  }
+
+  // Liga os eventos de uma conexao PeerJS (robusto contra o 'open' que nao dispara)
+  function conectarEventos(conn){
+    if(!conn){ salaLog('conexao nula'); return; }
+    // adiciona JA a lista (sem esperar o 'open'): assim salaEnviar nunca fica com
+    // a lista vazia. O send so acontece de fato quando c.open for true.
+    if(SALA.conns.indexOf(conn)<0) SALA.conns.push(conn);
+
+    function aoAbrir(){
+      salaLog('conexao ABERTA com '+(conn.peer||'par'));
+      atualizarPeers();
+      if(!SALA.host){
+        try{ conn.send(JSON.stringify({tipo:'pedeEstado'})); }catch(e){}
+        let n=0; const it=setInterval(()=>{ if(n++>=8||!conn.open){clearInterval(it);return;} try{ conn.send(JSON.stringify({tipo:'ping', t0:Date.now()})); }catch(e){} }, 300);
+      } else {
+        try{ conn.send(JSON.stringify(coletarEstado())); salaLog('enviei estado ao convidado'); }catch(e){}
+      }
+    }
+
+    // se a conexao JA estiver aberta quando chegamos aqui, aja na hora
+    if(conn.open){ aoAbrir(); } else { conn.on('open', aoAbrir); }
+
+    conn.on('data', d=>{
+      try{ const msg=JSON.parse(d); salaLog('recebi: '+msg.tipo); salaReceber(msg, conn); }
+      catch(e){ salaLog('erro ao ler dado'); }
+    });
+    conn.on('close', ()=>{ SALA.conns=SALA.conns.filter(c=>c!==conn); salaLog('conexao fechada'); atualizarPeers(); });
+    conn.on('error', e=>{ salaLog('erro na conexao: '+(e&&e.type||'?')); });
+  }
+
+  function idAleatorio(){
+    return 'orivox-'+Math.random().toString(36).slice(2,8);
+  }
+
+  // Destrava o audio aproveitando o gesto do usuario (clique em criar/entrar).
+  // Sem isso, o play que chega pela REDE fica bloqueado pela politica de autoplay.
+  function destravarAudio(){
+    try{
+      ensureCtx();
+      if(state.ctx && state.ctx.state==='suspended') state.ctx.resume();
+      // toca um silencio de 1 amostra so para "acordar" o contexto
+      const b=state.ctx.createBuffer(1,1,22050);
+      const s=state.ctx.createBufferSource(); s.buffer=b; s.connect(state.ctx.destination); s.start(0);
+      salaLog('audio destravado (contexto '+state.ctx.state+')');
+    }catch(e){ salaLog('falha ao destravar audio'); }
+  }
+
+  function criarSala(){
+    if(typeof Peer==='undefined'){ salaMsg('indisponível', false); alert('A biblioteca de conexão não carregou. Verifique sua internet e recarregue.'); return; }
+    destravarAudio();
+    SALA.host=true;
+    SALA.id=idAleatorio();
+    SALA.peer=new Peer(SALA.id);
+    salaMsg('conectando...', true);
+    SALA.peer.on('open', id=>{
+      SALA.ligada=true;
+      salaMsg('sala aberta', true);
+      salaLog('sala criada, id='+id);
+      const url=location.origin+location.pathname+'?sala='+id;
+      $('salaLink').value=url;
+      $('salaAcoes').classList.add('hidden');
+      $('salaConectada').classList.remove('hidden');
+      atualizarPeers();
+    });
+    SALA.peer.on('connection', conn=>{ salaLog('alguem esta entrando...'); conectarEventos(conn); });
+    SALA.peer.on('error', e=>{ salaMsg('erro de conexão', false); salaLog('ERRO peer: '+(e&&e.type||'?')); });
+  }
+
+  function entrarSala(idSala){
+    if(typeof Peer==='undefined'){ salaMsg('indisponível', false); return; }
+    destravarAudio();
+    SALA.host=false;
+    SALA.peer=new Peer();
+    salaMsg('entrando...', true);
+    SALA.peer.on('open', (meuId)=>{
+      salaLog('meu peer abriu ('+meuId+'), conectando a '+idSala);
+      SALA.ligada=true;
+      const conn=SALA.peer.connect(idSala, {reliable:true});
+      conectarEventos(conn);
+      salaMsg('na sala', true);
+      const url=location.origin+location.pathname+'?sala='+idSala;
+      $('salaLink').value=url;
+      $('salaAcoes').classList.add('hidden');
+      $('salaConectada').classList.remove('hidden');
+    });
+    SALA.peer.on('error', e=>{ salaMsg('sala não encontrada', false); salaLog('ERRO peer: '+(e&&e.type||'?')); });
+  }
+
+  function sairSala(){
+    try{ SALA.conns.forEach(c=>c.close()); }catch(e){}
+    try{ SALA.peer && SALA.peer.destroy(); }catch(e){}
+    SALA.peer=null; SALA.conns=[]; SALA.ligada=false; SALA.host=false;
+    salaMsg('desligada', false);
+    $('salaAcoes').classList.remove('hidden');
+    $('salaConectada').classList.add('hidden');
+    // limpa o ?sala= da URL sem recarregar
+    try{ history.replaceState(null,'',location.pathname); }catch(e){}
+  }
+
+  // ---- Ligacao dos botoes ----
+  (function ligarSala(){
+    const criar=$('salaCriar'), entrar=$('salaEntrarBtn'), copiar=$('salaCopiar'), sair=$('salaSair');
+    if(criar) criar.addEventListener('click', criarSala);
+    if(entrar) entrar.addEventListener('click', ()=>{
+      const cod=prompt('Cole o código ou o link da sala:');
+      if(!cod) return;
+      const m=cod.match(/sala=([\w-]+)/);
+      entrarSala(m? m[1] : cod.trim());
+    });
+    if(copiar) copiar.addEventListener('click', ()=>{
+      const inp=$('salaLink'); if(!inp) return;
+      inp.select();
+      try{ navigator.clipboard.writeText(inp.value); }catch(e){ document.execCommand('copy'); }
+      copiar.textContent='Copiado!';
+      setTimeout(()=>copiar.textContent='Copiar', 1500);
+    });
+    if(sair) sair.addEventListener('click', sairSala);
+
+    // Se abriu por um link ?sala=XYZ: NAO entra sozinho (o audio ficaria travado
+    // pela politica de autoplay, por falta de um gesto). Em vez disso, prepara o
+    // botao "Entrar" para um toque, que E o gesto que libera o audio.
+    const p=new URLSearchParams(location.search).get('sala');
+    if(p && entrar){
+      SALA._salaAlvo = p;
+      entrar.textContent='Entrar na sala do ensaio';
+      entrar.classList.add('btn-gold');
+      const salaMsgEl=$('salaStatus'); if(salaMsgEl){ salaMsgEl.textContent='toque em "Entrar" para começar'; }
+      // ao tocar, entra na sala do link (gesto libera o audio)
+      entrar.onclick = ()=>{ destravarAudio(); entrarSala(p); };
+    }
+  })();
+
+  // ---- Intercepta os controles para retransmitir (sem alterar o original) ----
+  // Envolve as funcoes existentes: elas seguem funcionando, e AO FINAL avisam a sala.
+  (function interceptarControles(){
+    if(typeof applyGains==='function'){
+      const orig=applyGains;
+      window.__sala_applyGains = orig;
+      applyGains=function(){
+        orig.apply(this, arguments);
+        if(SALA.ligada && !SALA.aplicando){ salaEnviar(coletarEstado()); }
+      };
+    }
+  })();
+
+})();
+
+
+</script>
+</body>
+</html>
