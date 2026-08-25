@@ -2144,10 +2144,19 @@
       // Sala ligada: agenda o play num instante futuro comum a todos, para o
       // audio cair junto em cada aparelho (sincronismo por relogio).
       if(typeof SALA!=='undefined' && SALA.ligada && !SALA.aplicando){
-        const quando = Date.now() + SALA.offsetRelogio + 300;
+        // folga maior (700ms): 300ms era apertado e o outro aparelho perdia o
+        // instante, comecando no tempo seguinte. 700ms da tempo do comando chegar.
+        // Se o relogio ainda nao foi medido (play muito rapido apos entrar),
+        // usa folga ainda maior para compensar a incerteza do offset.
+        const relogioPronto = (SALA.host || SALA.melhorRtt!==undefined);
+        const folga = relogioPronto? 700 : 1200;
+        const quando = Date.now() + SALA.offsetRelogio + folga;
+        if(!relogioPronto) salaLog('relogio ainda medindo; usando folga maior');
         salaEnviar({tipo:'play', quando:quando, pos:state.offset});
         const esperar = Math.max(0, quando - (Date.now()+SALA.offsetRelogio));
-        setTimeout(()=>{ if(!state.playing) startPlayback(true); }, esperar);
+        // NAO passa true: a pre-contagem volta a funcionar (todos contam juntos,
+        // o que ainda ajuda o sincronismo, pois a musica entra apos a contagem).
+        setTimeout(()=>{ if(!state.playing) startPlayback(); }, esperar);
       } else {
         startPlayback();
       }
@@ -2593,7 +2602,9 @@
       const esperar = Math.max(0, msg.quando - agora);
       SALA.aplicando=true;
       state.offset = msg.pos||0;
-      setTimeout(()=>{ if(!state.playing && state.tracks.length){ startPlayback(true); } SALA.aplicando=false; }, esperar);
+      // NAO passa true: a pre-contagem funciona igual em todos os aparelhos.
+      // Como todos partem do mesmo instante e contam juntos, entram no mesmo "1".
+      setTimeout(()=>{ if(!state.playing && state.tracks.length){ startPlayback(); } SALA.aplicando=false; }, esperar);
       return;
     }
     if(msg.tipo==='pausa'){ SALA.aplicando=true; if(state.playing) pausePlayback(); if(typeof updateTimeUI==='function') updateTimeUI(); SALA.aplicando=false; return; }
