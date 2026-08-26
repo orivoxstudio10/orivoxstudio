@@ -368,7 +368,7 @@
         <button class="btn btn-ghost btn-sm" id="salaPedirArq" style="width:100%">Baixar as pistas do anfitrião (se você não as tem)</button>
       </div>
       <div class="sala-linha">
-        <button class="btn btn-ghost btn-sm" id="salaMic" style="width:100%" aria-pressed="false">🎤 Ligar meu microfone (falar com a sala)</button>
+        <button class="btn btn-ghost btn-sm" id="salaMic" style="width:100%" aria-pressed="false">🎤 Falar com a sala</button>
       </div>
       <div class="sala-hint" id="salaHint">Todos precisam importar a MESMA música. Os comandos (play, volume, mudo, solo) são compartilhados.</div>
       <div class="sala-fone">
@@ -2126,11 +2126,16 @@
 
   function refreshLayout(){
     const has = state.tracks.length>0;
-    transport.classList.toggle('visible',has);
+    // Sala ativa: mostra os controles de play e o metronomo MESMO sem pistas,
+    // para permitir o ensaio so com click (Frente 2).
+    const salaAtiva = (typeof SALA!=='undefined' && SALA.ligada);
+    const mostrarTransporte = has || salaAtiva;
+    transport.classList.toggle('visible', mostrarTransporte);
     consoleEl.classList.toggle('visible',has);
     exporter.classList.toggle('visible',has);
-    emptyNote.style.display = has? 'none':'block';
-    metroEl.classList.toggle('visible',has);
+    emptyNote.style.display = mostrarTransporte? 'none':'block';
+    // o metronomo aparece com pistas OU com sala ativa (ensaio so de click)
+    metroEl.classList.toggle('visible', has || salaAtiva);
     chordsEl.classList.toggle('visible',has);
     if(typeof estimarTamanho==='function') estimarTamanho();
     sepCard.classList.toggle('visible', state.tracks.length===1 && !state.sepDismissed);
@@ -2815,6 +2820,7 @@
       SALA.ligada=true;
       salaMsg('sala aberta', true);
       salaLog('sala criada, id='+id);
+      refreshLayout();
       const url=location.origin+location.pathname+'?sala='+id;
       $('salaLink').value=url;
       $('salaAcoes').classList.add('hidden');
@@ -2839,6 +2845,7 @@
       const conn=SALA.peer.connect(idSala, {reliable:true});
       conectarEventos(conn);
       salaMsg('na sala', true);
+      refreshLayout();
       const url=location.origin+location.pathname+'?sala='+idSala;
       $('salaLink').value=url;
       $('salaAcoes').classList.add('hidden');
@@ -2854,6 +2861,7 @@
     salaMsg('desligada', false);
     $('salaAcoes').classList.remove('hidden');
     $('salaConectada').classList.add('hidden');
+    if(typeof refreshLayout==='function') refreshLayout();
     // limpa o ?sala= da URL sem recarregar
     try{ history.replaceState(null,'',location.pathname); }catch(e){}
   }
@@ -2862,29 +2870,62 @@
   // Opcional, comeca DESLIGADO. Normalmente so o produtor liga; os demais ouvem.
   SALA._mic = { ligado:false, stream:null, chamadas:[] };
 
-  async function ligarMic(){
-    if(typeof Peer==='undefined' || !SALA.peer){ salaLog('entre numa sala antes de usar o microfone'); return; }
+  // Prepara o microfone UMA VEZ (permissao + conexoes de voz), ja MUTADO.
+  // Depois, ligar/desligar e so mutar/desmutar (leve, nao sacode o audio da
+  // musica, entao NAO quebra a sincronia da sala durante a execucao).
+  async function prepararMic(){
+    if(SALA._mic.stream) return true;   // ja preparado
+    if(typeof Peer==='undefined' || !SALA.peer){ salaLog('entre numa sala antes de usar o microfone'); return false; }
     try{
-      const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true}, video:false});
-      SALA._mic.stream=stream; SALA._mic.ligado=true;
-      // chama cada par conectado, enviando o audio do microfone
+      const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true, autoGainControl:true}, video:false});
+      SALA._mic.stream=stream;
+      // comeca MUTADO (a faixa de audio desabilitada = silencio, mas a conexao fica de pe)
+      stream.getAudioTracks().forEach(t=> t.enabled=false);
+      // abre a chamada de voz com cada par, uma unica vez
       SALA.conns.forEach(cn=>{
         try{ const call=SALA.peer.call(cn.peer, stream); if(call) SALA._mic.chamadas.push(call); }catch(e){}
       });
-      salaLog('microfone LIGADO');
+      salaLog('microfone preparado (mutado)');
+      return true;
+    }catch(e){ salaLog('nao consegui acessar o microfone'); return false; }
+  }
+  async function ligarMic(){
+    // Se o mic ainda nao foi preparado, o PRIMEIRO toque so prepara (pede
+    // permissao e abre a conexao de voz). Essa e a unica parte "pesada", e
+    // assim ela nunca acontece por surpresa no meio da musica: o usuario ve
+    // o aviso e ja deixa preparado. Desmutar de fato vem no proximo toque.
+    if(!SALA._mic.stream){
+      const preparando = (state && state.playing);
+      const ok = await prepararMic();
+      if(!ok) return;
       atualizarBotaoMic();
-    }catch(e){ salaLog('nao consegui acessar o microfone'); }
+      if(preparando) salaLog('mic preparado durante a musica; toque de novo para falar');
+      else salaLog('mic pronto; toque para falar');
+      return;   // nao desmuta ainda: evita qualquer tranco no mesmo gesto
+    }
+    // mic ja preparado: desmutar e leve (nao mexe no motor), seguro durante a musica
+    SALA._mic.stream.getAudioTracks().forEach(t=> t.enabled=true);
+    SALA._mic.ligado=true;
+    salaLog('microfone LIGADO (falando)');
+    atualizarBotaoMic();
   }
   function desligarMic(){
-    try{ SALA._mic.chamadas.forEach(c=>c.close()); }catch(e){}
-    try{ if(SALA._mic.stream) SALA._mic.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
-    SALA._mic.chamadas=[]; SALA._mic.stream=null; SALA._mic.ligado=false;
-    salaLog('microfone desligado');
+    // mutar = so desabilitar a faixa (NAO fecha a conexao, NAO para o stream):
+    // assim nao ha tranco no audio da musica que esta tocando.
+    if(SALA._mic.stream) SALA._mic.stream.getAudioTracks().forEach(t=> t.enabled=false);
+    SALA._mic.ligado=false;
+    salaLog('microfone mutado');
     atualizarBotaoMic();
   }
   function atualizarBotaoMic(){
     const b=$('salaMic'); if(!b) return;
-    b.textContent = SALA._mic.ligado? '🎤 Desligar meu microfone' : '🎤 Ligar meu microfone (falar com a sala)';
+    if(SALA._mic.ligado){
+      b.textContent = '🎤 Falando... (toque para mutar)';
+    } else if(SALA._mic.stream){
+      b.textContent = '🎤 Falar com a sala (pronto)';
+    } else {
+      b.textContent = '🎤 Preparar meu microfone';
+    }
     b.setAttribute('aria-pressed', SALA._mic.ligado);
     b.classList.toggle('mute-on', SALA._mic.ligado);
   }
