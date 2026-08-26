@@ -1389,8 +1389,11 @@
   }
   // clock0: instante do relógio em que a MÚSICA (posição offsetSec) começa a soar.
   // countSec: duração da pré-contagem já agendada antes de clock0.
-  function scheduleClicks(ctx, dest, clock0, countSec, offsetSec, durationSec){
-    const mode=mMode.value; if(mode==='off') return [];
+  function scheduleClicks(ctx, dest, clock0, countSec, offsetSec, durationSec, forcarContagem){
+    const mode=mMode.value;
+    // Se a sala forcou uma pre-contagem (forcarContagem), tocamos a contagem mesmo
+    // com o metronomo local 'off', para o convidado ouvir e entrar junto.
+    if(mode==='off' && !(forcarContagem && countSec>0)) return [];
     const [num,den]=mMeter.value.split('/').map(Number);
     const criados=[];
     // Pré-contagem: bipes espaçados pelo BPM EXATO, com o último caindo na 1ª batida.
@@ -1411,6 +1414,7 @@
         }
       }
     }
+    if(mode==='off') return criados;   // forcamos so a pre-contagem; sem click na musica
     if(mode!=='full') return criados;
     if(METRO.beats && METRO.beats.length>4){
       // Clique batida a batida, seguindo o andamento real da música
@@ -1440,7 +1444,7 @@
   }
 
   const TAPM={times:[]};
-  mBpm.addEventListener('change', ()=>{ METRO.travado=true; if($('mAutoInfo')) $('mAutoInfo').textContent='BPM fixado manualmente em '+mBpm.value+'. A detecção automática não vai sobrescrever.'; });
+  mBpm.addEventListener('change', ()=>{ METRO.travado=true; if($('mAutoInfo')) $('mAutoInfo').textContent='BPM fixado manualmente em '+mBpm.value+'. A detecção automática não vai sobrescrever.'; if(typeof window.__salaMetroConfig==='function') window.__salaMetroConfig(); });
   mTap.addEventListener('click', ()=>{
     const now=performance.now();
     if(TAPM.times.length && now-TAPM.times[TAPM.times.length-1]>2500) TAPM.times=[];
@@ -1451,6 +1455,7 @@
       mBpm.value=Math.round((60000/iv[Math.floor(iv.length/2)])*10)/10;
       METRO.travado=true;
       mTap.textContent='TAP '+mBpm.value;
+      if(typeof window.__salaMetroConfig==='function') window.__salaMetroConfig();
     } else mTap.textContent='TAP '+TAPM.times.length+'...';
     clearTimeout(TAPM.reset);
     TAPM.reset=setTimeout(()=>{ mTap.textContent='TAP'; TAPM.times=[]; },3000);
@@ -1470,6 +1475,31 @@
     pausePlayback(); state.offset=p; startPlayback(true);
   });
   mMeter.addEventListener('change', ()=>{ METRO.down={}; });
+  // Sincronizar MODO e BPM do metronomo inteligente com a sala (o click que todos ouvem).
+  function salaMetroConfig(){
+    if(typeof SALA==='undefined' || !SALA.ligada || SALA.aplicando) return;
+    // envia TODOS os controles do metronomo inteligente (a alma da plataforma),
+    // para o click ficar identico em todos os aparelhos.
+    salaEnviar({tipo:'metroConfig',
+      modo: mMode.value,
+      bpm: mBpm.value,
+      meter: mMeter.value,
+      count: $('mCount')? $('mCount').value : undefined,
+      countStyle: $('mCountStyle')? $('mCountStyle').value : undefined,
+      countSub: $('mCountSub')? $('mCountSub').value : undefined,
+      phase: $('mPhase')? $('mPhase').value : undefined,
+      trackMode: mTrackMode? mTrackMode.value : undefined
+    });
+  }
+  mMode.addEventListener('change', salaMetroConfig);
+  mMeter.addEventListener('change', salaMetroConfig);
+  // Ligar os demais controles do metronomo inteligente a sincronizacao:
+  ['mCount','mCountStyle','mCountSub','mPhase'].forEach(id=>{
+    const el=$(id); if(el) el.addEventListener('change', salaMetroConfig);
+  });
+  if($('mPhase')) $('mPhase').addEventListener('input', salaMetroConfig);
+  if(mTrackMode) mTrackMode.addEventListener('change', salaMetroConfig);
+  window.__salaMetroConfig = salaMetroConfig;
   if(mTrackMode) mTrackMode.addEventListener('change', ()=>{
     if(!state.tracks.length) return;
     METRO.travado=false;   // permite a reanálise sobrescrever o BPM
@@ -1493,8 +1523,8 @@
     METRO.beats=nb; METRO.strengths=ns; METRO.lows=nl; METRO.down={};
     if($('mAutoInfo')) $('mAutoInfo').textContent='BPM ajustado manualmente para '+novo+' ('+(fator<1?'metade':'dobro')+'). Grade recalculada.';
   }
-  $('mHalf').addEventListener('click', ()=> ajustarBpmManual(0.5));
-  $('mDouble').addEventListener('click', ()=> ajustarBpmManual(2));
+  $('mHalf').addEventListener('click', ()=>{ ajustarBpmManual(0.5); if(typeof window.__salaMetroConfig==='function') window.__salaMetroConfig(); });
+  $('mDouble').addEventListener('click', ()=>{ ajustarBpmManual(2); if(typeof window.__salaMetroConfig==='function') window.__salaMetroConfig(); });
   $('mMapBtn').addEventListener('click', ()=> $('mMapFile').click());
   $('mMapFile').addEventListener('change', async (e)=>{
     const f=e.target.files[0]; e.target.value='';
@@ -1774,6 +1804,7 @@
     t.el.pan.addEventListener('input', ()=>{
       t.pan=parseInt(t.el.pan.value,10)||0;
       if(t.panner && state.ctx) t.panner.pan.setTargetAtTime(t.pan/100, state.ctx.currentTime, .015);
+      salaPista(t, 'pan', t.pan);
     });
     t.el.pan.addEventListener('dblclick', ()=>{
       t.el.pan.value=0; t.pan=0;
@@ -1784,18 +1815,21 @@
       t.volume = t.el.vol.value/100;
       t.el.volVal.textContent = t.el.vol.value+'%';
       applyGains();
+      salaPista(t, 'vol', t.el.vol.value);
     });
     t.el.mute.addEventListener('click', ()=>{
       t.muted=!t.muted;
       t.el.mute.classList.toggle('mute-on',t.muted);
       t.el.mute.setAttribute('aria-pressed',t.muted);
       applyGains();
+      salaPista(t, 'mute', t.muted);
     });
     t.el.solo.addEventListener('click', ()=>{
       t.solo=!t.solo;
       t.el.solo.classList.toggle('solo-on',t.solo);
       t.el.solo.setAttribute('aria-pressed',t.solo);
       applyGains();
+      salaPista(t, 'solo', t.solo);
     });
     t.el.name.addEventListener('change', ()=>{ t.name=t.el.name.value.trim()||t.name; t.el.name.value=t.name; });
     t.el.remove.addEventListener('click', ()=>{
@@ -2213,13 +2247,17 @@
     tg.classList.toggle('solo-on', state.loopOn);
     drawAllWaves(Math.max(0,currentPos()));
   }
-  $('loopA').addEventListener('click', ()=>{ state.loopA=Math.max(0,currentPos()); if(state.loopB!==null&&state.loopB<=state.loopA) state.loopB=null; updateLoopUI(); });
-  $('loopB').addEventListener('click', ()=>{ const p=Math.max(0,currentPos()); if(state.loopA===null||p>state.loopA){ state.loopB=p; } updateLoopUI(); });
+  function salaLoop(){
+    if(typeof SALA==='undefined' || !SALA.ligada || SALA.aplicando) return;
+    salaEnviar({tipo:'loop', a:state.loopA, b:state.loopB, on:state.loopOn});
+  }
+  $('loopA').addEventListener('click', ()=>{ state.loopA=Math.max(0,currentPos()); if(state.loopB!==null&&state.loopB<=state.loopA) state.loopB=null; updateLoopUI(); salaLoop(); });
+  $('loopB').addEventListener('click', ()=>{ const p=Math.max(0,currentPos()); if(state.loopA===null||p>state.loopA){ state.loopB=p; } updateLoopUI(); salaLoop(); });
   $('loopToggle').addEventListener('click', ()=>{
     if(state.loopA===null||state.loopB===null){ $('loopInfo').textContent='Marque A e depois B primeiro.'; return; }
-    state.loopOn=!state.loopOn; updateLoopUI();
+    state.loopOn=!state.loopOn; updateLoopUI(); salaLoop();
   });
-  $('loopClear').addEventListener('click', ()=>{ state.loopA=null; state.loopB=null; state.loopOn=false; updateLoopUI(); });
+  $('loopClear').addEventListener('click', ()=>{ state.loopA=null; state.loopB=null; state.loopOn=false; updateLoopUI(); salaLoop(); });
   masterVol.addEventListener('input', ()=>{
     if(state.master) state.master.gain.setTargetAtTime(masterVol.value/100, state.ctx.currentTime, .015);
   });
@@ -2242,10 +2280,12 @@
         const folga = relogioPronto? 700 : 1200;
         const quando = Date.now() + SALA.offsetRelogio + folga;
         if(!relogioPronto) salaLog('relogio ainda medindo; usando folga maior');
-        salaEnviar({tipo:'play', quando:quando, pos:state.offset});
+        // calcula a pre-contagem DESTE aparelho e manda para todos usarem a mesma,
+        // para a musica entrar no mesmo instante em todos (com ou sem contagem local).
+        const temCont = (mMode.value!=='off' && state.offset<0.01);
+        const countSecComum = temCont ? metroCountSec() : 0;
+        salaEnviar({tipo:'play', quando:quando, pos:state.offset, countSec:countSecComum});
         const esperar = Math.max(0, quando - (Date.now()+SALA.offsetRelogio));
-        // NAO passa true: a pre-contagem volta a funcionar (todos contam juntos,
-        // o que ainda ajuda o sincronismo, pois a musica entra apos a contagem).
         setTimeout(()=>{ if(!state.playing) startPlayback(); }, esperar);
       } else {
         startPlayback();
@@ -2257,11 +2297,19 @@
     if(typeof SALA!=='undefined' && SALA.ligada && !SALA.aplicando) salaEnviar({tipo:'stop'});
   });
 
-  function startPlayback(skipCount){
+  function startPlayback(skipCount, countSecForcado){
     ensureCtx();
     if(state.offset>=state.duration) state.offset=0;
-    const temContagem = (mMode.value!=='off' && state.offset<0.01 && !skipCount);
-    const countSec = temContagem? metroCountSec() : 0;
+    // countSecForcado: quando a sala manda um tempo de pre-contagem comum, todos
+    // usam esse valor (para a musica entrar junta). undefined = usa a config local.
+    let temContagem, countSec;
+    if(countSecForcado!==undefined && countSecForcado!==null){
+      temContagem = countSecForcado > 0;
+      countSec = countSecForcado;
+    } else {
+      temContagem = (mMode.value!=='off' && state.offset<0.01 && !skipCount);
+      countSec = temContagem? metroCountSec() : 0;
+    }
     // Fase = instante do 1º tempo real dentro do áudio (ex: 0,43s de cabeça).
     const fase = Math.max(0, parseFloat(mPhase.value)||0);
     // Estilo da contagem: 'emenda' faz a música soar a partir do 1º tempo detectado
@@ -2308,7 +2356,7 @@
     } else {
       METRO.gain.connect(state.master);
     }
-    METRO.nodes = scheduleClicks(state.ctx, METRO.gain, clock0, countSec, posEmClock0, state.duration);
+    METRO.nodes = scheduleClicks(state.ctx, METRO.gain, clock0, countSec, posEmClock0, state.duration, (countSecForcado!==undefined && countSecForcado>0));
     // O relógio de posição parte do ponto real onde a música começou a soar
     state.startedAt = clock0;
     state.offsetSoando = posEmClock0;
@@ -2642,6 +2690,13 @@
   }
 
   // Envia uma mensagem a todos os conectados
+  // Envia uma mudanca de pista (mute/solo/vol/pan) para a sala. A pista e
+  // identificada pelo NOME (todos importam a mesma musica, os nomes batem).
+  function salaPista(t, acao, valor){
+    if(typeof SALA==='undefined' || !SALA.ligada || SALA.aplicando) return;
+    salaEnviar({tipo:'pista', nome:t.name, acao:acao, valor:valor});
+  }
+
   function salaEnviar(msg){
     if(!SALA.ligada){ return; }
     const txt=JSON.stringify(msg);
@@ -2755,7 +2810,7 @@
     // de um convidado, repasso aos OUTROS convidados, para todos ficarem em sincronia.
     // So retransmite comandos de sala (nao ping/pong, nao dados de arquivo grandes).
     if(SALA.host && origem){
-      const retransmitir = ['play','pausa','stop','seek','estado','metroPlay','metroStop','metroBpm'];
+      const retransmitir = ['play','pausa','stop','seek','estado','metroPlay','metroStop','metroBpm','metroPlayPedido','pista','loop','metroConfig'];
       if(retransmitir.indexOf(msg.tipo)>=0){
         const txt=JSON.stringify(msg);
         SALA.conns.forEach(c=>{ if(c!==origem && c.open){ try{ c.send(txt); }catch(e){} } });
@@ -2784,6 +2839,21 @@
       return;
     }
     // --- metronomo simples da sala ---
+    // Um convidado PEDIU para iniciar o click. So o anfitriao atende: define a
+    // epoca no seu relogio (a referencia) e distribui a TODOS (metroPlay).
+    if(msg.tipo==='metroPlayPedido'){
+      if(SALA.host){
+        SALA.aplicando=true;
+        if(msg.bpm){ $('smBpm').value=msg.bpm; SALA._metro.bpm=msg.bpm; }
+        const epoca = Date.now() + 1000;
+        SALA._metro.epoca = epoca; SALA._metro._ultimoK=undefined; SALA._metro.tocando=true;
+        ensureCtx(); if(state.ctx.state==='suspended') state.ctx.resume();
+        smAgendarBloco(); atualizarBotaoSmPlay();
+        salaEnviar({tipo:'metroPlay', epoca:epoca, bpm:SALA._metro.bpm});
+        SALA.aplicando=false;
+      }
+      return;
+    }
     if(msg.tipo==='metroPlay'){
       SALA.aplicando=true;
       $('smBpm').value=msg.bpm; SALA._metro.bpm=msg.bpm;
@@ -2798,7 +2868,15 @@
     if(msg.tipo==='metroBpm'){
       SALA.aplicando=true;
       $('smBpm').value=msg.bpm; SALA._metro.bpm=msg.bpm;
-      if(SALA._metro.tocando){ smParar(false); smIniciar(false); }
+      // se estava tocando, o anfitriao re-emite a epoca para todos re-sincronizarem
+      if(SALA._metro.tocando){
+        if(SALA.host){
+          const epoca = Date.now() + 1000;
+          SALA._metro.epoca=epoca; SALA._metro._ultimoK=undefined;
+          smParar(false); SALA._metro.tocando=true; smAgendarBloco();
+          salaEnviar({tipo:'metroPlay', epoca:epoca, bpm:SALA._metro.bpm});
+        }
+      }
       SALA.aplicando=false; return;
     }
     // --- envio de arquivos (Frente 5) ---
@@ -2813,13 +2891,43 @@
       const esperar = Math.max(0, msg.quando - agora);
       SALA.aplicando=true;
       state.offset = msg.pos||0;
-      // NAO passa true: a pre-contagem funciona igual em todos os aparelhos.
-      // Como todos partem do mesmo instante e contam juntos, entram no mesmo "1".
-      setTimeout(()=>{ if(!state.playing && state.tracks.length){ startPlayback(); } SALA.aplicando=false; }, esperar);
+      // usa o MESMO tempo de pre-contagem que o anfitriao (msg.countSec), para a
+      // musica entrar no mesmo instante em todos, mesmo que a config local diste.
+      const cs = (msg.countSec!==undefined)? msg.countSec : undefined;
+      setTimeout(()=>{ if(!state.playing && state.tracks.length){ startPlayback(false, cs); } SALA.aplicando=false; }, esperar);
       return;
     }
     if(msg.tipo==='pausa'){ SALA.aplicando=true; if(state.playing) pausePlayback(); if(typeof updateTimeUI==='function') updateTimeUI(); SALA.aplicando=false; return; }
     if(msg.tipo==='stop'){ SALA.aplicando=true; if(state.playing) pausePlayback(); state.offset=0; if(typeof updateTimeUI==='function') updateTimeUI(); SALA.aplicando=false; return; }
+    if(msg.tipo==='metroConfig'){
+      SALA.aplicando=true;
+      if(msg.modo!==undefined) mMode.value=msg.modo;
+      if(msg.bpm!==undefined){ mBpm.value=msg.bpm; METRO.travado=true; }
+      if(msg.meter!==undefined){ mMeter.value=msg.meter; METRO.down={}; }
+      if(msg.count!==undefined && $('mCount')) $('mCount').value=msg.count;
+      if(msg.countStyle!==undefined && $('mCountStyle')) $('mCountStyle').value=msg.countStyle;
+      if(msg.countSub!==undefined && $('mCountSub')) $('mCountSub').value=msg.countSub;
+      if(msg.phase!==undefined && $('mPhase')) $('mPhase').value=msg.phase;
+      if(msg.trackMode!==undefined && mTrackMode) mTrackMode.value=msg.trackMode;
+      SALA.aplicando=false; return;
+    }
+    if(msg.tipo==='loop'){
+      SALA.aplicando=true;
+      state.loopA=msg.a; state.loopB=msg.b; state.loopOn=msg.on;
+      updateLoopUI();
+      SALA.aplicando=false; return;
+    }
+    if(msg.tipo==='pista'){
+      SALA.aplicando=true;
+      const t = state.tracks.find(x=>x.name===msg.nome);
+      if(t){
+        if(msg.acao==='mute'){ t.muted=msg.valor; t.el.mute.classList.toggle('mute-on',t.muted); t.el.mute.setAttribute('aria-pressed',t.muted); applyGains(); }
+        else if(msg.acao==='solo'){ t.solo=msg.valor; t.el.solo.classList.toggle('solo-on',t.solo); t.el.solo.setAttribute('aria-pressed',t.solo); applyGains(); }
+        else if(msg.acao==='vol'){ t.el.vol.value=msg.valor; t.volume=msg.valor/100; t.el.volVal.textContent=msg.valor+'%'; applyGains(); }
+        else if(msg.acao==='pan'){ t.pan=parseInt(msg.valor,10)||0; t.el.pan.value=t.pan; if(t.panner && state.ctx) t.panner.pan.setTargetAtTime(t.pan/100, state.ctx.currentTime, .015); }
+      }
+      SALA.aplicando=false; return;
+    }
     if(msg.tipo==='seek'){ SALA.aplicando=true; if(typeof seekTo==='function') seekTo(msg.pos); SALA.aplicando=false; return; }
     if(msg.tipo==='pedeEstado'){ if(SALA.host && origem){ try{ origem.send(JSON.stringify(coletarEstado())); }catch(e){} } return; }
     if(msg.tipo==='ola'){ atualizarPeers(); return; }
@@ -3067,29 +3175,33 @@
   }
 
   function smAgendarBloco(){
-    // agenda ~20s de clicks na GRADE ABSOLUTA do relogio comum, reagendando.
+    // agenda ~12s de clicks na GRADE ABSOLUTA do relogio comum, reagendando.
     if(!SALA._metro.tocando) return;
     const dest = smGarantirCadeia();
     const bpm = SALA._metro.bpm;
     const beatMs = 60000/bpm;
     const foneMs = (SALA.foneCalib||0);
-    // "agora" em relogio comum:
-    const agoraComum = Date.now() + (SALA.offsetRelogio||0);
-    // qual e o proximo beat (indice) da grade absoluta, a partir de agora:
-    let k = Math.ceil((agoraComum - SALA._metro.epoca)/beatMs);
+    const agoraComum = Date.now() + (SALA.offsetRelogio||0);   // "agora" no relogio do host
+    // indice do primeiro beat que ainda esta no FUTURO proximo (com folga de 30ms):
+    let k = Math.ceil((agoraComum + 30 - SALA._metro.epoca)/beatMs);
     if(k<0) k=0;
-    const fimComum = agoraComum + 20000;   // agenda os proximos 20s
-    for(let beatComum = SALA._metro.epoca + k*beatMs; beatComum < fimComum; beatComum += beatMs, k++){
-      // instante do beat no relogio comum -> quanto falta -> instante no audio local
-      const falta = (beatComum - agoraComum)/1000;             // segundos ate esse beat
-      const tAudio = state.ctx.currentTime + falta - foneMs/1000;  // aplica calibracao do fone
-      if(tAudio < state.ctx.currentTime - 0.02) continue;      // ja passou: pula
-      // evita reagendar um beat ja agendado (guarda o ultimo indice)
-      if(SALA._metro._ultimoK!==undefined && k<=SALA._metro._ultimoK) continue;
-      SALA._metro._ultimoK = k;
+    // se ja agendamos ate certo indice, continua do proximo (evita duplicar):
+    if(SALA._metro._ultimoK!==undefined && k<=SALA._metro._ultimoK) k = SALA._metro._ultimoK + 1;
+    const fimComum = agoraComum + 12000;   // agenda os proximos 12s
+    let agendados = 0;
+    for(let idx=k; ; idx++){
+      const beatComum = SALA._metro.epoca + idx*beatMs;
+      if(beatComum >= fimComum) break;
+      const falta = (beatComum - agoraComum)/1000;                 // s ate esse beat
+      const tAudio = state.ctx.currentTime + falta - foneMs/1000;  // instante no audio local
+      if(tAudio <= state.ctx.currentTime + 0.005) continue;        // ja passou: pula com seguranca
       SALA._metro.nodes.push(clickBlip(state.ctx, dest, tAudio, false, false, false));
+      SALA._metro._ultimoK = idx;
+      agendados++;
     }
-    SALA._metro.timer = setTimeout(smAgendarBloco, 15000);   // reagenda antes de acabar
+    // limpa nodes antigos da lista (evita crescer sem limite)
+    if(SALA._metro.nodes.length > 400) SALA._metro.nodes = SALA._metro.nodes.slice(-200);
+    SALA._metro.timer = setTimeout(smAgendarBloco, 8000);   // reagenda com folga
   }
 
   function smIniciar(sincronizar){
@@ -3097,22 +3209,28 @@
     if(state.ctx.state==='suspended') state.ctx.resume();
     SALA._metro.bpm = parseInt($('smBpm').value,10)||100;
     if(sincronizar!==false && SALA.ligada && !SALA.aplicando){
-      // EPOCA = instante do beat 0, em RELOGIO COMUM (Date.now+offset). Todos os
-      // aparelhos usam a MESMA epoca, entao os beats caem na MESMA grade e na
-      // MESMA fase (sem galope). Damos uma folga generosa para todos receberem.
-      const folga = (SALA.melhorRtt!==undefined || SALA.host) ? 900 : 1600;
-      const epoca = Date.now() + (SALA.offsetRelogio||0) + folga;
-      SALA._metro.epoca = epoca;
-      SALA._metro._ultimoK = undefined;
-      SALA._metro.tocando = true;
-      salaEnviar({tipo:'metroPlay', epoca:epoca, bpm:SALA._metro.bpm});
+      if(SALA.host){
+        // O anfitriao e o maestro: define a epoca no SEU relogio (offset 0) e
+        // distribui a todos. Damos folga para todos receberem antes do beat 0.
+        const epoca = Date.now() + 1000;   // host: relogio comum = seu proprio relogio
+        SALA._metro.epoca = epoca;
+        SALA._metro._ultimoK = undefined;
+        SALA._metro.tocando = true;
+        salaEnviar({tipo:'metroPlay', epoca:epoca, bpm:SALA._metro.bpm});
+        smAgendarBloco();
+      } else {
+        // Convidado: NAO define a epoca sozinho (seu relogio nao e a referencia).
+        // Pede ao anfitriao, que define e distribui a todos (inclusive de volta a ele).
+        salaEnviar({tipo:'metroPlayPedido', bpm:SALA._metro.bpm});
+        // nao marca tocando ainda: espera o metroPlay do anfitriao
+      }
     } else {
-      // sozinho: epoca = agora (em relogio comum) + pequena folga
-      SALA._metro.epoca = Date.now() + (SALA.offsetRelogio||0) + 120;
+      // sozinho (fora de sala): epoca no proprio relogio
+      SALA._metro.epoca = Date.now() + 120;
       SALA._metro._ultimoK = undefined;
       SALA._metro.tocando = true;
+      smAgendarBloco();
     }
-    smAgendarBloco();
     atualizarBotaoSmPlay();
   }
   function smParar(sincronizar){
@@ -3154,9 +3272,20 @@
     });
     function smBpmMudou(){
       SALA._metro.bpm=parseInt(bpm.value,10)||100;
-      if(SALA.ligada && !SALA.aplicando) salaEnviar({tipo:'metroBpm', bpm:SALA._metro.bpm});
-      // se estiver tocando, reinicia para pegar o novo andamento
-      if(SALA._metro.tocando){ smParar(false); smIniciar(); }
+      if(SALA.ligada && !SALA.aplicando){
+        // avisa a sala. O host re-emite a epoca (todos re-sincronizam juntos).
+        salaEnviar({tipo:'metroBpm', bpm:SALA._metro.bpm});
+        // se EU sou o host e estou tocando, re-emito ja (o handler do host cuida).
+        if(SALA.host && SALA._metro.tocando){
+          const epoca = Date.now() + 1000;
+          SALA._metro.epoca=epoca; SALA._metro._ultimoK=undefined;
+          smParar(false); SALA._metro.tocando=true; smAgendarBloco();
+          salaEnviar({tipo:'metroPlay', epoca:epoca, bpm:SALA._metro.bpm});
+        }
+      } else if(SALA._metro.tocando){
+        // fora de sala: reinicia local para pegar o novo andamento
+        smParar(false); smIniciar(false);
+      }
     }
     window.__smBpmMudou = smBpmMudou;
   })();
