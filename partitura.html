@@ -922,7 +922,7 @@
   <div class="toolbar">
     <button class="btn primary" id="btnImport">Importar audio</button>
     <button class="btn icon-btn mic-atalho" id="btnGravarMicAtalho" title="Gravar com microfone">&#127908;<span class="mic-dot"></span></button>
-    <input type="file" id="fileInput" accept="audio/*" class="hidden" />
+    <input type="file" id="fileInput" accept=".mp3,.wav,.ogg,.m4a,.aac,.flac,.mp4,audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/aac,audio/flac,audio/*" class="hidden" />
     <input type="file" id="projInput" accept=".orivox,application/json" class="hidden" />
 
     <div class="sep"></div>
@@ -968,7 +968,7 @@
         <button class="dbtn" id="btnTempoBanda" disabled title="Para vozes dificeis (silabadas, sem percussao): importe a banda completa e o Orivox usa o tempo dela na voz, onde o pulso e claro">&#127925; Usar tempo da banda</button>
       </div>
     </div>
-    <input type="file" id="bandaInput" accept="audio/*" class="hidden" />
+    <input type="file" id="bandaInput" accept=".mp3,.wav,.ogg,.m4a,.aac,.flac,.mp4,audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/aac,audio/flac,audio/*" class="hidden" />
 
     <div class="sep"></div>
     <div class="grupo" data-rot="partitura">
@@ -1337,7 +1337,7 @@
           <span class="mic-tit">Playback de referencia (opcional)</span>
           <div class="mic-linha">
             <button class="btn ghost" id="micRefBtn">Importar playback</button>
-            <input type="file" id="micRefInput" accept="audio/*" class="hidden" />
+            <input type="file" id="micRefInput" accept=".mp3,.wav,.ogg,.m4a,.aac,.flac,.mp4,audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/aac,audio/flac,audio/*" class="hidden" />
             <span class="mic-nome" id="micRefNome">Nenhum playback importado.</span>
             <button class="btn ghost mini-btn hidden" id="micRefRemover" title="remover playback">Remover</button>
           </div>

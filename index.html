@@ -28,6 +28,13 @@
   .sala-input{flex:1;min-width:180px;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 10px;font-family:'IBM Plex Mono',monospace;font-size:12px}
   .sala-peers{font-size:12.5px;color:var(--gold-soft)}
   .sala-hint{font-size:11.5px;color:var(--muted);line-height:1.5}
+  .sala-fone{margin-top:12px;padding:12px;background:var(--panel-2);border:1px solid var(--line);border-radius:10px}
+  .sala-fone-topo{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:var(--ink);margin-bottom:8px}
+  .sala-fone-val{font-family:'IBM Plex Mono',monospace;color:var(--gold-soft);font-size:13px}
+  .sala-fone-range{width:100%;-webkit-appearance:none;appearance:none;height:8px;border-radius:5px;background:linear-gradient(90deg,var(--gold) 0%,var(--gold) var(--fill,0%),var(--line) var(--fill,0%),var(--line) 100%);outline:none;cursor:pointer}
+  .sala-fone-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:22px;height:22px;border-radius:50%;background:var(--gold-soft);border:3px solid var(--panel);cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+  .sala-fone-range::-moz-range-thumb{width:22px;height:22px;border-radius:50%;background:var(--gold-soft);border:3px solid var(--panel);cursor:pointer}
+  .sala-fone-hint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5}
   .sala-diag{margin-top:4px}
   .sala-diag summary{font-size:11px;color:var(--muted);cursor:pointer}
   .sala-log{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--gold-soft);background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-top:6px;max-height:160px;overflow-y:auto;white-space:pre-wrap;line-height:1.6}
@@ -111,6 +118,10 @@
   }
   .btn:active{transform:translateY(1px)}
   .btn-gold{background:var(--gold);color:#171307}
+  /* input de arquivo oculto de forma acessivel (compat. Safari/iOS): NAO usar
+     hidden nem display:none, que impedem o seletor de abrir no iPhone. */
+  .input-oculto{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0;opacity:0}
+  label.btn{display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
   .btn-gold:hover{filter:brightness(1.08)}
   .btn-ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
   .btn-ghost:hover{border-color:var(--muted)}
@@ -323,8 +334,8 @@
   <section class="dropzone" id="dropzone" aria-label="Área de importação de pistas">
     <h2>Traga suas pistas para cá</h2>
     <p>Arraste os arquivos de áudio da sua música (voz, violão, bateria, baixo...) ou selecione no botão abaixo. Tudo é processado aqui no seu navegador: nada é enviado para servidor algum.</p>
-    <button class="btn btn-gold" id="pickBtn">Selecionar arquivos de áudio</button>
-    <input type="file" id="fileInput" accept="audio/*" multiple hidden>
+    <label class="btn btn-gold" for="fileInput" id="pickBtn" role="button" tabindex="0">Selecionar arquivos de áudio</label>
+    <input type="file" id="fileInput" class="input-oculto" accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,audio/mpeg,audio/mp4,audio/wav,audio/x-wav,audio/aac,audio/ogg,audio/flac" multiple>
     <div class="hint">Formatos aceitos: MP3, WAV, OGG, M4A e outros que seu navegador reproduza. Você pode adicionar mais pistas depois.</div>
   </section>
 
@@ -353,7 +364,22 @@
         <span class="spacer"></span>
         <button class="btn btn-ghost btn-sm" id="salaSair">Sair da sala</button>
       </div>
+      <div class="sala-linha">
+        <button class="btn btn-ghost btn-sm" id="salaPedirArq" style="width:100%">Baixar as pistas do anfitrião (se você não as tem)</button>
+      </div>
+      <div class="sala-linha">
+        <button class="btn btn-ghost btn-sm" id="salaMic" style="width:100%" aria-pressed="false">🎤 Ligar meu microfone (falar com a sala)</button>
+      </div>
       <div class="sala-hint" id="salaHint">Todos precisam importar a MESMA música. Os comandos (play, volume, mudo, solo) são compartilhados.</div>
+      <div class="sala-fone">
+        <div class="sala-fone-topo">
+          <span>Ajuste do meu fone</span>
+          <span class="sala-fone-val" id="foneVal">0 ms</span>
+        </div>
+        <input type="range" id="foneCal" min="0" max="300" step="5" value="0" class="sala-fone-range">
+        <div class="sala-fone-hint">Se você usa fone Bluetooth e o som chega atrasado, arraste para a direita até sentir no tempo. Fone com fio: deixe em 0.</div>
+        <button class="btn btn-ghost btn-sm" id="foneTeste" style="margin-top:6px">Tocar teste (4 batidas)</button>
+      </div>
       <details class="sala-diag">
         <summary>Diagnóstico da conexão</summary>
         <pre id="salaLog" class="sala-log">aguardando...</pre>
@@ -600,8 +626,14 @@
   }
 
   /* ---------------- Importação ---------------- */
-  pickBtn.addEventListener('click', ()=> fileInput.click());
-  addMoreBtn.addEventListener('click', ()=> fileInput.click());
+  // pickBtn agora e um <label for="fileInput">: abre o seletor nativamente (o
+  // Safari/iOS obedece o label, mas ignora o .click() via JS). Nao adicionamos
+  // listener de clique nele para nao abrir o seletor duas vezes no desktop.
+  // O "Adicionar pistas" continua sendo <button>; damos a ele o mesmo alvo.
+  addMoreBtn.addEventListener('click', ()=>{
+    // no iOS, .click() as vezes falha: entao clicamos no proprio input visivel.
+    try{ fileInput.click(); }catch(e){}
+  });
   fileInput.addEventListener('change', e=>{ loadFiles(e.target.files); fileInput.value=''; });
 
   ;['dragover','dragenter'].forEach(ev=> dropzone.addEventListener(ev, e=>{
@@ -620,10 +652,13 @@
     for(const f of files){
       try{
         const buf = await f.arrayBuffer();
-        const audio = await state.ctx.decodeAudioData(buf);
-        addTrack(cleanName(f.name), audio);
+        const audio = await state.ctx.decodeAudioData(buf.slice(0));
+        const t = addTrack(cleanName(f.name), audio);
+        // guarda os bytes originais e o nome real: usados para enviar a pista
+        // aos outros aparelhos pela sala (Frente 5).
+        if(t){ t.bytes = buf; t.fileName = f.name; t.fileType = f.type||'audio/mpeg'; }
       }catch(err){
-        alert('Não consegui ler "'+f.name+'". O arquivo pode estar corrompido ou num formato que este navegador não decodifica.');
+        alert('Não consegui reproduzir "'+f.name+'". Este navegador não conseguiu decodificar o áudio. No iPhone, o Safari às vezes recusa M4A ou WAV: tente converter para MP3, que funciona em todos os aparelhos.');
       }
     }
     dropzone.querySelector('h2').textContent = 'Traga suas pistas para cá';
@@ -1498,7 +1533,7 @@
 
   function addTrack(name, buffer){
     const ins = identificarInstrumento(name);
-    const t = {
+    const t = window.__ultimaTrack = {
       id: state.nextId++,
       name, buffer,
       volume: 0.9, muted:false, solo:false,
@@ -1509,8 +1544,10 @@
     };
     state.tracks.push(t);
     state.duration = Math.max(...state.tracks.map(x=>x.buffer.duration));
+    t.__added=true;
     buildStrip(t);
     agendarAnaliseTempo();
+    return t;
   }
 
   // Detecção unificada: espera as pistas assentarem e analisa a SOMA de todas.
@@ -2136,7 +2173,9 @@
 
   /* ---------------- Reprodução ---------------- */
   playBtn.addEventListener('click', ()=>{
-    if(!state.tracks.length) return;
+    // Sala/modo so-metronomo: pode tocar SEM pistas se o metronomo estiver ligado.
+    const soClick = (!state.tracks.length && mMode && mMode.value!=='off');
+    if(!state.tracks.length && !soClick) return;
     if(state.playing){
       pausePlayback();
       if(typeof SALA!=='undefined' && SALA.ligada && !SALA.aplicando) salaEnviar({tipo:'pausa'});
@@ -2169,6 +2208,9 @@
 
   function startPlayback(skipCount){
     ensureCtx();
+    // modo so-metronomo: sem pistas, o "compasso" roda em loop continuo.
+    const soClick = (!state.tracks.length && mMode && mMode.value!=='off');
+    if(soClick && !state.duration) state.duration = 600;   // 10 min de click continuo (agenda em bloco seguro)
     if(state.offset>=state.duration) state.offset=0;
     const temContagem = (mMode.value!=='off' && state.offset<0.01 && !skipCount);
     const countSec = temContagem? metroCountSec() : 0;
@@ -2179,7 +2221,10 @@
     // (mais previsível para músicas que começam suave, sugestão do usuário).
     const estiloZero = (mCountStyle && mCountStyle.value==='zero');
     const inicioAudio = (temContagem && fase>0.02 && !estiloZero)? fase : state.offset;
-    const clock0 = state.ctx.currentTime + 0.06 + countSec;   // instante em que a 1ª batida soa
+    // Compensacao do fone (calibracao): adianta o audio pelo atraso do Bluetooth
+    // deste aparelho, para o som chegar no ouvido no tempo certo.
+    const foneMs = (typeof SALA!=='undefined' && SALA.foneCalib)? SALA.foneCalib : 0;
+    const clock0 = state.ctx.currentTime + 0.06 + countSec - (foneMs/1000);   // instante em que a 1ª batida soa
     // ALINHAMENTO DA ENTRADA: quando a música não começa "na cara" (tem cabeça,
     // anacruse ou dedilhado antes do tempo 1), ela deve COMEÇAR A SOAR durante os
     // últimos tempos da contagem, para que seu 1º tempo real caia exatamente onde
@@ -2568,6 +2613,78 @@
     }
   }
 
+  // ===== ENVIO DE ARQUIVOS ENTRE APARELHOS (Frente 5) =====
+  // Envia as pistas do anfitriao para um convidado, pela conexao WebRTC, em
+  // pedacos. O audio NAO vai para a internet: viaja direto de um aparelho ao
+  // outro. E uma COMODIDADE opcional (se o convidado nao tem os arquivos).
+  const CHUNK = 16*1024;  // 16 KB por pedaco (seguro para o canal de dados)
+  SALA._recArq = {};      // arquivos sendo recebidos
+
+  function bytesParaBase64(buf){
+    let bin=''; const b=new Uint8Array(buf);
+    for(let i=0;i<b.length;i++) bin+=String.fromCharCode(b[i]);
+    return btoa(bin);
+  }
+  function base64ParaBytes(b64){
+    const bin=atob(b64); const b=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) b[i]=bin.charCodeAt(i);
+    return b.buffer;
+  }
+
+  async function enviarPistasPara(conn){
+    const comBytes = state.tracks.filter(t=>t.bytes);
+    if(!comBytes.length){ salaLog('sem pistas com bytes para enviar'); return; }
+    salaLog('enviando '+comBytes.length+' pista(s) ao convidado...');
+    for(let idx=0; idx<comBytes.length; idx++){
+      const t=comBytes[idx];
+      const b64=bytesParaBase64(t.bytes);
+      const total=Math.ceil(b64.length/CHUNK);
+      try{ conn.send(JSON.stringify({tipo:'arqInicio', id:idx, nome:t.fileName||t.name, mime:t.fileType||'audio/mpeg', total:total})); }catch(e){}
+      for(let k=0;k<total;k++){
+        const pedaco=b64.slice(k*CHUNK,(k+1)*CHUNK);
+        try{ conn.send(JSON.stringify({tipo:'arqPedaco', id:idx, k:k, d:pedaco})); }catch(e){}
+        // pequena pausa a cada 8 pedacos para nao afogar o canal
+        if(k%8===7) await new Promise(r=>setTimeout(r,4));
+      }
+      try{ conn.send(JSON.stringify({tipo:'arqFim', id:idx})); }catch(e){}
+    }
+    salaLog('envio de pistas concluido');
+  }
+
+  function receberArqInicio(msg){
+    SALA._recArq[msg.id]={nome:msg.nome, mime:msg.mime, total:msg.total, partes:new Array(msg.total), recebidas:0};
+    mostrarProgressoArq();
+  }
+  function receberArqPedaco(msg){
+    const r=SALA._recArq[msg.id]; if(!r) return;
+    if(r.partes[msg.k]===undefined){ r.partes[msg.k]=msg.d; r.recebidas++; }
+    if(r.recebidas % 20===0) mostrarProgressoArq();
+  }
+  async function receberArqFim(msg){
+    const r=SALA._recArq[msg.id]; if(!r) return;
+    try{
+      const b64=r.partes.join('');
+      const buf=base64ParaBytes(b64);
+      ensureCtx();
+      const audio=await state.ctx.decodeAudioData(buf.slice(0));
+      const t=addTrack(cleanName(r.nome), audio);
+      if(t){ t.bytes=buf; t.fileName=r.nome; t.fileType=r.mime; }
+      salaLog('pista recebida: '+r.nome);
+      refreshLayout();
+    }catch(e){ salaLog('erro ao montar pista recebida'); }
+    delete SALA._recArq[msg.id];
+    mostrarProgressoArq();
+  }
+  function mostrarProgressoArq(){
+    const ids=Object.keys(SALA._recArq);
+    const el=$('salaHint');
+    if(!el) return;
+    if(!ids.length){ return; }
+    let txt='Recebendo pistas: ';
+    txt += ids.map(id=>{ const r=SALA._recArq[id]; return Math.round(100*r.recebidas/r.total)+'%'; }).join(', ');
+    el.textContent=txt;
+  }
+
   // Log VISIVEL na tela (diagnostico): mostra os ultimos eventos da sala.
   function salaLog(txt){
     try{
@@ -2586,15 +2703,30 @@
     if(msg.tipo==='ping'){ try{ origem.send(JSON.stringify({tipo:'pong', t0:msg.t0, tHost:Date.now()})); }catch(e){} return; }
     if(msg.tipo==='pong'){
       const rtt = Date.now() - msg.t0;             // ida e volta desta amostra
-      // guarda a amostra de MENOR rtt: e a menos contaminada por congestionamento,
-      // e a que da a estimativa de relogio mais confiavel (tecnica padrao de NTP).
-      if(SALA.melhorRtt===undefined || rtt < SALA.melhorRtt){
-        SALA.melhorRtt = rtt;
-        const tLocalEstimado = msg.tHost + rtt/2;
-        SALA.offsetRelogio = tLocalEstimado - Date.now();
-      }
+      const offsetAmostra = (msg.tHost + rtt/2) - Date.now();
+      // Mantem uma janela das ultimas 20 amostras (rtt + offset estimado).
+      SALA._amostras = SALA._amostras || [];
+      SALA._amostras.push({rtt, offset:offsetAmostra});
+      if(SALA._amostras.length>20) SALA._amostras.shift();
+      // Usa as amostras de MENOR rtt (as menos contaminadas): pega o terco melhor
+      // e tira a MEDIANA dos offsets. Isso e mais estavel que so o menor de todos,
+      // e se re-adapta quando a rede melhora (janela deslizante).
+      const ord = SALA._amostras.slice().sort((a,b)=>a.rtt-b.rtt);
+      const top = ord.slice(0, Math.max(1, Math.ceil(ord.length/3)));
+      top.sort((a,b)=>a.offset-b.offset);
+      const novoOffset = top[Math.floor(top.length/2)].offset;
+      SALA.melhorRtt = ord[0].rtt;
+      // suavizacao: move 60% em direcao ao novo valor (evita solavancos)
+      if(SALA.offsetRelogio===0 || SALA._amostras.length<4) SALA.offsetRelogio = novoOffset;
+      else SALA.offsetRelogio = SALA.offsetRelogio*0.4 + novoOffset*0.6;
+      salaLog('relogio: offset '+Math.round(SALA.offsetRelogio)+'ms, rtt min '+Math.round(SALA.melhorRtt)+'ms');
       return;
     }
+    // --- envio de arquivos (Frente 5) ---
+    if(msg.tipo==='arqInicio'){ receberArqInicio(msg); return; }
+    if(msg.tipo==='arqPedaco'){ receberArqPedaco(msg); return; }
+    if(msg.tipo==='arqFim'){ receberArqFim(msg); return; }
+    if(msg.tipo==='pedeArquivos'){ if(SALA.host) enviarPistasPara(origem); return; }
     if(msg.tipo==='estado'){ aplicarEstado(msg); return; }
     if(msg.tipo==='play'){
       // sincronismo por relogio: comeca quando o relogio local alcanca "quando"
@@ -2634,7 +2766,11 @@
       atualizarPeers();
       if(!SALA.host){
         try{ conn.send(JSON.stringify({tipo:'pedeEstado'})); }catch(e){}
-        let n=0; const it=setInterval(()=>{ if(n++>=8||!conn.open){clearInterval(it);return;} try{ conn.send(JSON.stringify({tipo:'ping', t0:Date.now()})); }catch(e){} }, 300);
+        // rajada inicial rapida (12 pings em 200ms) para cravar o relogio JA,
+        // e depois pings lentos continuos (cada 2s) para manter afinado.
+        let n=0;
+        const rajada=setInterval(()=>{ if(n++>=12||!conn.open){clearInterval(rajada);return;} try{ conn.send(JSON.stringify({tipo:'ping', t0:Date.now()})); }catch(e){} }, 200);
+        SALA._pingCont=setInterval(()=>{ if(!conn.open){clearInterval(SALA._pingCont);return;} try{ conn.send(JSON.stringify({tipo:'ping', t0:Date.now()})); }catch(e){} }, 2000);
       } else {
         try{ conn.send(JSON.stringify(coletarEstado())); salaLog('enviei estado ao convidado'); }catch(e){}
       }
@@ -2686,6 +2822,7 @@
       atualizarPeers();
     });
     SALA.peer.on('connection', conn=>{ salaLog('alguem esta entrando...'); conectarEventos(conn); });
+    prepararRecepcaoDeVoz();
     SALA.peer.on('error', e=>{ salaMsg('erro de conexão', false); salaLog('ERRO peer: '+(e&&e.type||'?')); });
   }
 
@@ -2698,6 +2835,7 @@
     SALA.peer.on('open', (meuId)=>{
       salaLog('meu peer abriu ('+meuId+'), conectando a '+idSala);
       SALA.ligada=true;
+      prepararRecepcaoDeVoz();
       const conn=SALA.peer.connect(idSala, {reliable:true});
       conectarEventos(conn);
       salaMsg('na sala', true);
@@ -2720,6 +2858,86 @@
     try{ history.replaceState(null,'',location.pathname); }catch(e){}
   }
 
+  // ===== MICROFONE / VOZ NA SALA (Frente 6) =====
+  // Opcional, comeca DESLIGADO. Normalmente so o produtor liga; os demais ouvem.
+  SALA._mic = { ligado:false, stream:null, chamadas:[] };
+
+  async function ligarMic(){
+    if(typeof Peer==='undefined' || !SALA.peer){ salaLog('entre numa sala antes de usar o microfone'); return; }
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true}, video:false});
+      SALA._mic.stream=stream; SALA._mic.ligado=true;
+      // chama cada par conectado, enviando o audio do microfone
+      SALA.conns.forEach(cn=>{
+        try{ const call=SALA.peer.call(cn.peer, stream); if(call) SALA._mic.chamadas.push(call); }catch(e){}
+      });
+      salaLog('microfone LIGADO');
+      atualizarBotaoMic();
+    }catch(e){ salaLog('nao consegui acessar o microfone'); }
+  }
+  function desligarMic(){
+    try{ SALA._mic.chamadas.forEach(c=>c.close()); }catch(e){}
+    try{ if(SALA._mic.stream) SALA._mic.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+    SALA._mic.chamadas=[]; SALA._mic.stream=null; SALA._mic.ligado=false;
+    salaLog('microfone desligado');
+    atualizarBotaoMic();
+  }
+  function atualizarBotaoMic(){
+    const b=$('salaMic'); if(!b) return;
+    b.textContent = SALA._mic.ligado? '🎤 Desligar meu microfone' : '🎤 Ligar meu microfone (falar com a sala)';
+    b.setAttribute('aria-pressed', SALA._mic.ligado);
+    b.classList.toggle('mute-on', SALA._mic.ligado);
+  }
+  // ao receber uma chamada de voz de outro musico, toca o audio dele
+  function prepararRecepcaoDeVoz(){
+    if(!SALA.peer) return;
+    SALA.peer.on('call', call=>{
+      try{
+        // responde sem enviar audio proprio (so ouve), a menos que o mic esteja ligado
+        call.answer(SALA._mic.stream || undefined);
+        call.on('stream', remoto=>{
+          let a=document.getElementById('vozRemota_'+call.peer);
+          if(!a){ a=document.createElement('audio'); a.id='vozRemota_'+call.peer; a.autoplay=true; document.body.appendChild(a); }
+          a.srcObject=remoto;
+          salaLog('recebendo voz de um musico');
+        });
+      }catch(e){}
+    });
+  }
+
+  // ---- Calibracao de fone (Frente 4) ----
+  (function ligarFone(){
+    const range=$('foneCal'), val=$('foneVal'), teste=$('foneTeste');
+    if(!range) return;
+    function aplica(){
+      const ms=parseInt(range.value,10)||0;
+      if(typeof SALA!=='undefined') SALA.foneCalib=ms;
+      if(val) val.textContent=ms+' ms';
+      range.style.setProperty('--fill', (ms/300*100)+'%');
+    }
+    range.addEventListener('input', aplica);
+    aplica();
+    // Teste: toca 4 batidas para o musico sentir se esta no tempo do fone.
+    if(teste) teste.addEventListener('click', ()=>{
+      try{
+        ensureCtx();
+        const ms=parseInt(range.value,10)||0;
+        const t0=state.ctx.currentTime+0.1;
+        const beat=0.5;  // 120 BPM
+        for(let k=0;k<4;k++){
+          // o teste NAO compensa: mostra o atraso real do fone, para calibrar
+          const osc=state.ctx.createOscillator(), g=state.ctx.createGain();
+          osc.frequency.value = k===0? 1500:1000;
+          g.gain.setValueAtTime(0.0001, t0+k*beat);
+          g.gain.exponentialRampToValueAtTime(0.5, t0+k*beat+0.005);
+          g.gain.exponentialRampToValueAtTime(0.0001, t0+k*beat+0.09);
+          osc.connect(g); g.connect(state.master||state.ctx.destination);
+          osc.start(t0+k*beat); osc.stop(t0+k*beat+0.1);
+        }
+      }catch(e){}
+    });
+  })();
+
   // ---- Ligacao dos botoes ----
   (function ligarSala(){
     const criar=$('salaCriar'), entrar=$('salaEntrarBtn'), copiar=$('salaCopiar'), sair=$('salaSair');
@@ -2738,6 +2956,14 @@
       setTimeout(()=>copiar.textContent='Copiar', 1500);
     });
     if(sair) sair.addEventListener('click', sairSala);
+    const mic=$('salaMic');
+    if(mic) mic.addEventListener('click', ()=>{ SALA._mic.ligado? desligarMic() : ligarMic(); });
+    const pedirArq=$('salaPedirArq');
+    if(pedirArq) pedirArq.addEventListener('click', ()=>{
+      if(SALA.host){ salaLog('voce e o anfitriao (ja tem as pistas)'); return; }
+      salaLog('pedindo as pistas ao anfitriao...');
+      SALA.conns.forEach(cn=>{ try{ if(cn.open) cn.send(JSON.stringify({tipo:'pedeArquivos'})); }catch(e){} });
+    });
 
     // Se abriu por um link ?sala=XYZ: NAO entra sozinho (o audio ficaria travado
     // pela politica de autoplay, por falta de um gesto). Em vez disso, prepara o
