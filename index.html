@@ -13,6 +13,24 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,650;1,9..144,500&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+  /* Metronomo simples da sala */
+  .sala-metro{display:none;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin:0 0 14px;align-items:center;gap:18px}
+  .sala-metro.visible{display:flex;flex-wrap:wrap}
+  .sala-metro-ic{font-size:34px;color:var(--gold);line-height:1}
+  .sala-metro-ctrl{display:flex;align-items:center;gap:16px;flex-wrap:wrap;flex:1}
+  .sala-metro-bpm{display:flex;align-items:center;gap:10px}
+  .sala-metro-mais{width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .sala-metro-mais:hover{border-color:var(--gold);color:var(--gold-soft)}
+  .sala-metro-val{display:flex;align-items:baseline;gap:6px}
+  .sala-metro-val input{width:74px;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:8px 10px;font-size:22px;font-family:'IBM Plex Mono',monospace;text-align:center}
+  .sala-metro-val span{font-size:12px;color:var(--muted)}
+  .sala-metro-play{padding:11px 22px;font-size:15px}
+  .sala-metro-play.tocando{background:var(--red);color:#fff}
+  .sala-metro-ajustes{width:100%;display:flex;gap:20px;flex-wrap:wrap;margin-top:4px}
+  .sala-metro-campo{flex:1;min-width:160px}
+  .sala-metro-campo label{display:block;font-size:11px;color:var(--muted);margin-bottom:5px}
+  .sala-metro-campo input[type=range]{width:100%}
+  .sala-metro-hint{width:100%;font-size:11.5px;color:var(--muted);line-height:1.5}
   /* Sala de ensaio (Caminho A) */
   .sala-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin:0 0 14px}
   .sala-head{display:flex;align-items:center;gap:12px}
@@ -385,6 +403,31 @@
         <pre id="salaLog" class="sala-log">aguardando...</pre>
       </details>
     </div>
+  </section>
+
+  <!-- Metronomo simples da sala (aparece so quando ha sala e nenhum audio) -->
+  <section class="sala-metro" id="salaMetro" aria-label="Metrônomo da sala">
+    <div class="sala-metro-ic" aria-hidden="true">&#9835;</div>
+    <div class="sala-metro-ctrl">
+      <div class="sala-metro-bpm">
+        <button class="sala-metro-mais" id="smMenos" aria-label="Diminuir BPM">&minus;</button>
+        <div class="sala-metro-val"><input type="number" id="smBpm" value="100" min="30" max="300" inputmode="numeric"> <span>BPM</span></div>
+        <button class="sala-metro-mais" id="smMais" aria-label="Aumentar BPM">+</button>
+      </div>
+      <button class="btn btn-gold sala-metro-play" id="smPlay">&#9654; Iniciar click</button>
+    </div>
+    <div class="sala-metro-ajustes">
+      <div class="sala-metro-campo">
+        <label for="smVol">Volume do meu click</label>
+        <input id="smVol" type="range" min="0" max="100" value="60">
+      </div>
+      <div class="sala-metro-campo">
+        <label for="smPan">Direção no meu fone (L/R)</label>
+        <input id="smPan" type="range" min="-100" max="100" value="0" title="Joga o click para a esquerda ou direita do seu fone. É só no seu aparelho.">
+        <div class="pan-lbl" id="smPanLbl" style="text-align:center">Centro</div>
+      </div>
+    </div>
+    <div class="sala-metro-hint">O andamento (BPM) e o play são compartilhados com a sala. O volume e a direção do click são só no seu aparelho. Importe um áudio para abrir o estúdio completo.</div>
   </section>
 
   <!-- Transporte -->
@@ -2126,17 +2169,19 @@
 
   function refreshLayout(){
     const has = state.tracks.length>0;
-    // Sala ativa: mostra os controles de play e o metronomo MESMO sem pistas,
-    // para permitir o ensaio so com click (Frente 2).
+    // O sistema completo (transporte, metronomo inteligente, console) aparece
+    // SO com audio, exatamente como sempre foi (nao quebra nada).
+    transport.classList.toggle('visible', has);
+    consoleEl.classList.toggle('visible', has);
+    exporter.classList.toggle('visible', has);
+    metroEl.classList.toggle('visible', has);
+    chordsEl.classList.toggle('visible', has);
+    // Sala ativa E sem audio: mostra o METRONOMO SIMPLES da sala (so BPM + play).
     const salaAtiva = (typeof SALA!=='undefined' && SALA.ligada);
-    const mostrarTransporte = has || salaAtiva;
-    transport.classList.toggle('visible', mostrarTransporte);
-    consoleEl.classList.toggle('visible',has);
-    exporter.classList.toggle('visible',has);
-    emptyNote.style.display = mostrarTransporte? 'none':'block';
-    // o metronomo aparece com pistas OU com sala ativa (ensaio so de click)
-    metroEl.classList.toggle('visible', has || salaAtiva);
-    chordsEl.classList.toggle('visible',has);
+    const mostrarSalaMetro = salaAtiva && !has;
+    const sm = document.getElementById('salaMetro');
+    if(sm) sm.classList.toggle('visible', mostrarSalaMetro);
+    emptyNote.style.display = (has || mostrarSalaMetro)? 'none':'block';
     if(typeof estimarTamanho==='function') estimarTamanho();
     sepCard.classList.toggle('visible', state.tracks.length===1 && !state.sepDismissed);
     updateTimeUI();
@@ -2178,9 +2223,7 @@
 
   /* ---------------- Reprodução ---------------- */
   playBtn.addEventListener('click', ()=>{
-    // Sala/modo so-metronomo: pode tocar SEM pistas se o metronomo estiver ligado.
-    const soClick = (!state.tracks.length && mMode && mMode.value!=='off');
-    if(!state.tracks.length && !soClick) return;
+    if(!state.tracks.length) return;
     if(state.playing){
       pausePlayback();
       if(typeof SALA!=='undefined' && SALA.ligada && !SALA.aplicando) salaEnviar({tipo:'pausa'});
@@ -2213,9 +2256,6 @@
 
   function startPlayback(skipCount){
     ensureCtx();
-    // modo so-metronomo: sem pistas, o "compasso" roda em loop continuo.
-    const soClick = (!state.tracks.length && mMode && mMode.value!=='off');
-    if(soClick && !state.duration) state.duration = 600;   // 10 min de click continuo (agenda em bloco seguro)
     if(state.offset>=state.duration) state.offset=0;
     const temContagem = (mMode.value!=='off' && state.offset<0.01 && !skipCount);
     const countSec = temContagem? metroCountSec() : 0;
@@ -2727,6 +2767,25 @@
       salaLog('relogio: offset '+Math.round(SALA.offsetRelogio)+'ms, rtt min '+Math.round(SALA.melhorRtt)+'ms');
       return;
     }
+    // --- metronomo simples da sala ---
+    if(msg.tipo==='metroPlay'){
+      SALA.aplicando=true;
+      $('smBpm').value=msg.bpm; SALA._metro.bpm=msg.bpm;
+      const agora = Date.now() + SALA.offsetRelogio;
+      const esperar = Math.max(0, msg.quando - agora)/1000;
+      ensureCtx(); if(state.ctx.state==='suspended') state.ctx.resume();
+      const foneMs=(SALA.foneCalib||0)/1000;
+      SALA._metro.t0 = state.ctx.currentTime + esperar + 0.06 - foneMs;
+      SALA._metro.tocando=true; smAgendarBloco(); atualizarBotaoSmPlay();
+      SALA.aplicando=false; return;
+    }
+    if(msg.tipo==='metroStop'){ SALA.aplicando=true; smParar(false); SALA.aplicando=false; return; }
+    if(msg.tipo==='metroBpm'){
+      SALA.aplicando=true;
+      $('smBpm').value=msg.bpm; SALA._metro.bpm=msg.bpm;
+      if(SALA._metro.tocando){ smParar(false); smIniciar(false); }
+      SALA.aplicando=false; return;
+    }
     // --- envio de arquivos (Frente 5) ---
     if(msg.tipo==='arqInicio'){ receberArqInicio(msg); return; }
     if(msg.tipo==='arqPedaco'){ receberArqPedaco(msg); return; }
@@ -2809,17 +2868,29 @@
     }catch(e){ salaLog('falha ao destravar audio'); }
   }
 
+  function limparNomeSala(txt){
+    // normaliza o nome digitado: minusculas, sem espacos nem acentos nem simbolos
+    return (txt||'').toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'')  // tira acentos
+      .replace(/[^a-z0-9-]/g,'')                          // so letras, numeros e hifen
+      .slice(0,24);
+  }
   function criarSala(){
     if(typeof Peer==='undefined'){ salaMsg('indisponível', false); alert('A biblioteca de conexão não carregou. Verifique sua internet e recarregue.'); return; }
     destravarAudio();
+    // pede o NOME da sala (o usuario escolhe; fica facil de compartilhar)
+    let nome = prompt('Escolha um nome para a sala (ex: sala01, ensaiofesta):', 'sala01');
+    if(nome===null) return;              // cancelou
+    nome = limparNomeSala(nome);
+    if(!nome) nome = idAleatorio().replace('orivox-','');   // vazio: gera um
     SALA.host=true;
-    SALA.id=idAleatorio();
+    SALA.id='orivox-'+nome;              // o id do PeerJS precisa ser unico e valido
     SALA.peer=new Peer(SALA.id);
     salaMsg('conectando...', true);
     SALA.peer.on('open', id=>{
       SALA.ligada=true;
       salaMsg('sala aberta', true);
-      salaLog('sala criada, id='+id);
+      salaLog('sala criada: '+id);
       refreshLayout();
       const url=location.origin+location.pathname+'?sala='+id;
       $('salaLink').value=url;
@@ -2829,7 +2900,17 @@
     });
     SALA.peer.on('connection', conn=>{ salaLog('alguem esta entrando...'); conectarEventos(conn); });
     prepararRecepcaoDeVoz();
-    SALA.peer.on('error', e=>{ salaMsg('erro de conexão', false); salaLog('ERRO peer: '+(e&&e.type||'?')); });
+    SALA.peer.on('error', e=>{
+      const tipo = e&&e.type||'?';
+      if(tipo==='unavailable-id'){
+        salaMsg('esse nome ja esta em uso', false);
+        salaLog('nome de sala em uso; tente outro');
+        alert('Ja existe uma sala com esse nome agora. Escolha outro nome.');
+      } else {
+        salaMsg('erro de conexão', false);
+        salaLog('ERRO peer: '+tipo);
+      }
+    });
   }
 
   function entrarSala(idSala){
@@ -2945,6 +3026,114 @@
       }catch(e){}
     });
   }
+
+  // ===== METRONOMO SIMPLES DA SALA =====
+  // So BPM + play/pause, sincronizado. Aparece quando ha sala e nenhum audio.
+  SALA._metro = { tocando:false, nodes:[], t0:0, bpm:100, timer:null, gain:null, panner:null };
+
+  // Cadeia de audio LOCAL do metronomo simples: volume + direcao L/R, por usuario.
+  function smGarantirCadeia(){
+    ensureCtx();
+    if(!SALA._metro.gain){
+      SALA._metro.gain = state.ctx.createGain();
+      const vol = ($('smVol')? parseInt($('smVol').value,10):60)/100;
+      SALA._metro.gain.gain.value = vol;
+      SALA._metro.panner = state.ctx.createStereoPanner? state.ctx.createStereoPanner() : null;
+      if(SALA._metro.panner){
+        const pv = ($('smPan')? parseInt($('smPan').value,10):0)/100;
+        SALA._metro.panner.pan.value = pv;
+        SALA._metro.gain.connect(SALA._metro.panner);
+        SALA._metro.panner.connect(state.ctx.destination);
+      } else {
+        SALA._metro.gain.connect(state.ctx.destination);
+      }
+    }
+    return SALA._metro.gain;
+  }
+
+  function smAgendarBloco(){
+    // agenda ~30s de clicks a partir do ponto atual, reagendando enquanto toca
+    if(!SALA._metro.tocando) return;
+    const dest = smGarantirCadeia();
+    const bpm = SALA._metro.bpm;
+    const beat = 60/bpm;
+    const agora = state.ctx.currentTime;
+    let n = Math.ceil((agora - SALA._metro.t0)/beat);
+    if(n<0) n=0;
+    const fim = agora + 30;
+    for(let t = SALA._metro.t0 + n*beat; t < fim; t += beat, n++){
+      if(t < agora - 0.05) continue;
+      // Todos os clicks IGUAIS (sem acento de tempo forte), como no metronomo
+      // inteligente. O acento denunciaria desalinhamento e nao e o que o Raphael quer.
+      SALA._metro.nodes.push(clickBlip(state.ctx, dest, t, false, false, false));
+    }
+    SALA._metro.timer = setTimeout(smAgendarBloco, 25000);
+  }
+
+  function smIniciar(sincronizar){
+    ensureCtx();
+    if(state.ctx.state==='suspended') state.ctx.resume();
+    SALA._metro.bpm = parseInt($('smBpm').value,10)||100;
+    SALA._metro.tocando = true;
+    // t0 = instante de inicio no relogio de AUDIO local. Se veio de comando da
+    // sala, ajusta pela diferenca de relogio para todos comecarem juntos.
+    const foneMs = (SALA.foneCalib||0)/1000;
+    SALA._metro.t0 = state.ctx.currentTime + 0.12 - foneMs;
+    smAgendarBloco();
+    atualizarBotaoSmPlay();
+    // avisa a sala para todos iniciarem juntos
+    if(sincronizar!==false && SALA.ligada && !SALA.aplicando){
+      const quando = Date.now() + SALA.offsetRelogio + 700;
+      salaEnviar({tipo:'metroPlay', quando:quando, bpm:SALA._metro.bpm});
+      // ajusta o t0 local para casar com o "quando" combinado
+      const esperar = Math.max(0,(quando - (Date.now()+SALA.offsetRelogio)))/1000;
+      SALA._metro.t0 = state.ctx.currentTime + esperar + 0.06 - foneMs;
+    }
+  }
+  function smParar(sincronizar){
+    SALA._metro.tocando=false;
+    if(SALA._metro.timer){ clearTimeout(SALA._metro.timer); SALA._metro.timer=null; }
+    try{ SALA._metro.nodes.forEach(n=>{ try{ n.stop&&n.stop(); }catch(e){} }); }catch(e){}
+    SALA._metro.nodes=[];
+    atualizarBotaoSmPlay();
+    if(sincronizar!==false && SALA.ligada && !SALA.aplicando){ salaEnviar({tipo:'metroStop'}); }
+  }
+  function atualizarBotaoSmPlay(){
+    const b=$('smPlay'); if(!b) return;
+    b.innerHTML = SALA._metro.tocando? '&#9632; Parar click' : '&#9654; Iniciar click';
+    b.classList.toggle('tocando', SALA._metro.tocando);
+  }
+
+  (function ligarSalaMetro(){
+    const play=$('smPlay'), mais=$('smMais'), menos=$('smMenos'), bpm=$('smBpm');
+    if(play) play.addEventListener('click', ()=>{ SALA._metro.tocando? smParar() : smIniciar(); });
+    if(mais) mais.addEventListener('click', ()=>{ bpm.value=Math.min(300,(parseInt(bpm.value,10)||100)+1); smBpmMudou(); });
+    if(menos) menos.addEventListener('click', ()=>{ bpm.value=Math.max(30,(parseInt(bpm.value,10)||100)-1); smBpmMudou(); });
+    if(bpm) bpm.addEventListener('change', smBpmMudou);
+    // Volume do click (local): ajusta o gain da cadeia do metronomo simples.
+    const vol=$('smVol'), pan=$('smPan'), panLbl=$('smPanLbl');
+    if(vol) vol.addEventListener('input', ()=>{
+      if(SALA._metro.gain && state.ctx) SALA._metro.gain.gain.setTargetAtTime(vol.value/100, state.ctx.currentTime, .015);
+    });
+    // Direcao L/R (local): ajusta o panner. Duplo-clique volta ao centro.
+    if(pan) pan.addEventListener('input', ()=>{
+      const v=parseInt(pan.value,10)||0;
+      if(SALA._metro.panner && state.ctx) SALA._metro.panner.pan.setTargetAtTime(v/100, state.ctx.currentTime, .015);
+      if(panLbl) panLbl.textContent = v===0? 'Centro' : (v<0? 'Esquerda '+(-v)+'%' : 'Direita '+v+'%');
+    });
+    if(pan) pan.addEventListener('dblclick', ()=>{
+      pan.value=0;
+      if(SALA._metro.panner && state.ctx) SALA._metro.panner.pan.setTargetAtTime(0, state.ctx.currentTime, .015);
+      if(panLbl) panLbl.textContent='Centro';
+    });
+    function smBpmMudou(){
+      SALA._metro.bpm=parseInt(bpm.value,10)||100;
+      if(SALA.ligada && !SALA.aplicando) salaEnviar({tipo:'metroBpm', bpm:SALA._metro.bpm});
+      // se estiver tocando, reinicia para pegar o novo andamento
+      if(SALA._metro.tocando){ smParar(false); smIniciar(); }
+    }
+    window.__smBpmMudou = smBpmMudou;
+  })();
 
   // ---- Calibracao de fone (Frente 4) ----
   (function ligarFone(){
