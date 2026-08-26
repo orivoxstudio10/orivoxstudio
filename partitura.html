@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Orivox Studio</title>
 <meta name="description" content="Orivox Studio: transcreva uma pista de audio, confira as notas sobre o espectrograma e exporte. Por Raphael Silveira." />
 <!-- Motor de rede neural (Basic Pitch da Spotify), o mesmo do Orivox. -->
@@ -360,6 +363,30 @@
     /* paineis largos (mixer, cartoes) encolhem para caber */
     .o-body > *{ max-width:100%; }
     .card-acc, .fp-linha, .mini{ max-width:100%; box-sizing:border-box; }
+    /* Espectrograma e sua area: altura confortavel e rolagem nas duas direcoes,
+       para nenhuma parte ficar inacessivel no celular. */
+    .pauta-papel, .pauta-corpo{ overflow:auto !important; -webkit-overflow-scrolling:touch;
+                                min-height:0; max-height:none; }
+    .pauta-flut{ height:66vh !important; }
+    /* o painel de figuras (lateral no desktop) vira bloco embaixo, largura total */
+    .figura-painel{ width:100% !important; flex:1 1 auto !important; order:3;
+                    border-left:none; border-top:1px solid #D8D3C6; max-height:none; }
+    /* a letra interativa e cifras nao encolhem demais */
+    .letra-interativa{ min-height:140px; }
+    /* qualquer painel de controles pode rolar se for alto */
+    .painel, .bloco, .secao{ max-width:100%; box-sizing:border-box; }
+    /* garante que o espectrograma (canvas) role horizontalmente se for largo */
+    .pauta-papel canvas{ max-width:none; }  /* canvas do espectro pode ser largo e rolar */
+    .pauta-papel{ overflow-x:auto !important; }
+    /* Painel direito (NOTA SELECIONADA + MIXAGEM): no mobile vira bloco de
+       largura total, empilhado abaixo do espectrograma, com tudo acessivel. */
+    .o-inspector{ flex:1 1 auto !important; width:100% !important; order:4;
+                  flex-direction:column; gap:14px; }
+    .o-panel{ width:100%; box-sizing:border-box; }
+    /* os controles de mixagem (Audio, Notas, Click, Click L/R) em largura total */
+    .o-inspector input[type=range]{ width:100%; }
+    /* o cabecalho superior (barra de ferramentas) quebra em linhas no mobile */
+    .o-topbar, .o-toolbar{ flex-wrap:wrap; height:auto; gap:8px; }
   }
 
   @media (pointer:coarse){

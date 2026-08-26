@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Orivox · Player Multipista</title>
 <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
@@ -2744,8 +2747,21 @@
 
   // Trata uma mensagem recebida
   function salaReceber(msg, origem){
-    // --- sincronizacao de relogio (ping-pong) ---
+    // --- sincronizacao de relogio (ping-pong): NUNCA retransmitir (e ponto-a-ponto) ---
     if(msg.tipo==='ping'){ try{ origem.send(JSON.stringify({tipo:'pong', t0:msg.t0, tHost:Date.now()})); }catch(e){} return; }
+    if(msg.tipo==='pong'){ /* tratado abaixo, nao retransmite */ }
+
+    // RETRANSMISSAO (topologia estrela): se EU sou o anfitriao e recebi um comando
+    // de um convidado, repasso aos OUTROS convidados, para todos ficarem em sincronia.
+    // So retransmite comandos de sala (nao ping/pong, nao dados de arquivo grandes).
+    if(SALA.host && origem){
+      const retransmitir = ['play','pausa','stop','seek','estado','metroPlay','metroStop','metroBpm'];
+      if(retransmitir.indexOf(msg.tipo)>=0){
+        const txt=JSON.stringify(msg);
+        SALA.conns.forEach(c=>{ if(c!==origem && c.open){ try{ c.send(txt); }catch(e){} } });
+      }
+    }
+
     if(msg.tipo==='pong'){
       const rtt = Date.now() - msg.t0;             // ida e volta desta amostra
       const offsetAmostra = (msg.tHost + rtt/2) - Date.now();
@@ -2771,11 +2787,10 @@
     if(msg.tipo==='metroPlay'){
       SALA.aplicando=true;
       $('smBpm').value=msg.bpm; SALA._metro.bpm=msg.bpm;
-      const agora = Date.now() + SALA.offsetRelogio;
-      const esperar = Math.max(0, msg.quando - agora)/1000;
       ensureCtx(); if(state.ctx.state==='suspended') state.ctx.resume();
-      const foneMs=(SALA.foneCalib||0)/1000;
-      SALA._metro.t0 = state.ctx.currentTime + esperar + 0.06 - foneMs;
+      // usa a MESMA EPOCA do anfitriao: todos na mesma grade -> mesma fase, sem galope.
+      SALA._metro.epoca = msg.epoca;
+      SALA._metro._ultimoK = undefined;   // reset do controle de beats agendados
       SALA._metro.tocando=true; smAgendarBloco(); atualizarBotaoSmPlay();
       SALA.aplicando=false; return;
     }
@@ -3029,7 +3044,7 @@
 
   // ===== METRONOMO SIMPLES DA SALA =====
   // So BPM + play/pause, sincronizado. Aparece quando ha sala e nenhum audio.
-  SALA._metro = { tocando:false, nodes:[], t0:0, bpm:100, timer:null, gain:null, panner:null };
+  SALA._metro = { tocando:false, nodes:[], epoca:0, bpm:100, timer:null, gain:null, panner:null, _ultimoK:undefined };
 
   // Cadeia de audio LOCAL do metronomo simples: volume + direcao L/R, por usuario.
   function smGarantirCadeia(){
@@ -3052,49 +3067,60 @@
   }
 
   function smAgendarBloco(){
-    // agenda ~30s de clicks a partir do ponto atual, reagendando enquanto toca
+    // agenda ~20s de clicks na GRADE ABSOLUTA do relogio comum, reagendando.
     if(!SALA._metro.tocando) return;
     const dest = smGarantirCadeia();
     const bpm = SALA._metro.bpm;
-    const beat = 60/bpm;
-    const agora = state.ctx.currentTime;
-    let n = Math.ceil((agora - SALA._metro.t0)/beat);
-    if(n<0) n=0;
-    const fim = agora + 30;
-    for(let t = SALA._metro.t0 + n*beat; t < fim; t += beat, n++){
-      if(t < agora - 0.05) continue;
-      // Todos os clicks IGUAIS (sem acento de tempo forte), como no metronomo
-      // inteligente. O acento denunciaria desalinhamento e nao e o que o Raphael quer.
-      SALA._metro.nodes.push(clickBlip(state.ctx, dest, t, false, false, false));
+    const beatMs = 60000/bpm;
+    const foneMs = (SALA.foneCalib||0);
+    // "agora" em relogio comum:
+    const agoraComum = Date.now() + (SALA.offsetRelogio||0);
+    // qual e o proximo beat (indice) da grade absoluta, a partir de agora:
+    let k = Math.ceil((agoraComum - SALA._metro.epoca)/beatMs);
+    if(k<0) k=0;
+    const fimComum = agoraComum + 20000;   // agenda os proximos 20s
+    for(let beatComum = SALA._metro.epoca + k*beatMs; beatComum < fimComum; beatComum += beatMs, k++){
+      // instante do beat no relogio comum -> quanto falta -> instante no audio local
+      const falta = (beatComum - agoraComum)/1000;             // segundos ate esse beat
+      const tAudio = state.ctx.currentTime + falta - foneMs/1000;  // aplica calibracao do fone
+      if(tAudio < state.ctx.currentTime - 0.02) continue;      // ja passou: pula
+      // evita reagendar um beat ja agendado (guarda o ultimo indice)
+      if(SALA._metro._ultimoK!==undefined && k<=SALA._metro._ultimoK) continue;
+      SALA._metro._ultimoK = k;
+      SALA._metro.nodes.push(clickBlip(state.ctx, dest, tAudio, false, false, false));
     }
-    SALA._metro.timer = setTimeout(smAgendarBloco, 25000);
+    SALA._metro.timer = setTimeout(smAgendarBloco, 15000);   // reagenda antes de acabar
   }
 
   function smIniciar(sincronizar){
     ensureCtx();
     if(state.ctx.state==='suspended') state.ctx.resume();
     SALA._metro.bpm = parseInt($('smBpm').value,10)||100;
-    SALA._metro.tocando = true;
-    // t0 = instante de inicio no relogio de AUDIO local. Se veio de comando da
-    // sala, ajusta pela diferenca de relogio para todos comecarem juntos.
-    const foneMs = (SALA.foneCalib||0)/1000;
-    SALA._metro.t0 = state.ctx.currentTime + 0.12 - foneMs;
+    if(sincronizar!==false && SALA.ligada && !SALA.aplicando){
+      // EPOCA = instante do beat 0, em RELOGIO COMUM (Date.now+offset). Todos os
+      // aparelhos usam a MESMA epoca, entao os beats caem na MESMA grade e na
+      // MESMA fase (sem galope). Damos uma folga generosa para todos receberem.
+      const folga = (SALA.melhorRtt!==undefined || SALA.host) ? 900 : 1600;
+      const epoca = Date.now() + (SALA.offsetRelogio||0) + folga;
+      SALA._metro.epoca = epoca;
+      SALA._metro._ultimoK = undefined;
+      SALA._metro.tocando = true;
+      salaEnviar({tipo:'metroPlay', epoca:epoca, bpm:SALA._metro.bpm});
+    } else {
+      // sozinho: epoca = agora (em relogio comum) + pequena folga
+      SALA._metro.epoca = Date.now() + (SALA.offsetRelogio||0) + 120;
+      SALA._metro._ultimoK = undefined;
+      SALA._metro.tocando = true;
+    }
     smAgendarBloco();
     atualizarBotaoSmPlay();
-    // avisa a sala para todos iniciarem juntos
-    if(sincronizar!==false && SALA.ligada && !SALA.aplicando){
-      const quando = Date.now() + SALA.offsetRelogio + 700;
-      salaEnviar({tipo:'metroPlay', quando:quando, bpm:SALA._metro.bpm});
-      // ajusta o t0 local para casar com o "quando" combinado
-      const esperar = Math.max(0,(quando - (Date.now()+SALA.offsetRelogio)))/1000;
-      SALA._metro.t0 = state.ctx.currentTime + esperar + 0.06 - foneMs;
-    }
   }
   function smParar(sincronizar){
     SALA._metro.tocando=false;
     if(SALA._metro.timer){ clearTimeout(SALA._metro.timer); SALA._metro.timer=null; }
     try{ SALA._metro.nodes.forEach(n=>{ try{ n.stop&&n.stop(); }catch(e){} }); }catch(e){}
     SALA._metro.nodes=[];
+    SALA._metro._ultimoK=undefined;
     atualizarBotaoSmPlay();
     if(sincronizar!==false && SALA.ligada && !SALA.aplicando){ salaEnviar({tipo:'metroStop'}); }
   }
@@ -3147,22 +3173,26 @@
     }
     range.addEventListener('input', aplica);
     aplica();
-    // Teste: toca 4 batidas para o musico sentir se esta no tempo do fone.
+    // Teste do fone: toca 8 batidas, e a CADA batida aplica a compensacao atual.
+    // Assim, se voce mexer na barra ENQUANTO ouve, sente o click se ajustar.
+    // (A calibracao serve para o click do SEU aparelho casar com o dos outros na
+    // sala; sozinho, use este teste so para conferir que a barra responde.)
     if(teste) teste.addEventListener('click', ()=>{
       try{
         ensureCtx();
-        const ms=parseInt(range.value,10)||0;
-        const t0=state.ctx.currentTime+0.1;
+        if(state.ctx.state==='suspended') state.ctx.resume();
         const beat=0.5;  // 120 BPM
-        for(let k=0;k<4;k++){
-          // o teste NAO compensa: mostra o atraso real do fone, para calibrar
+        const t0=state.ctx.currentTime+0.15;
+        for(let k=0;k<8;k++){
+          const ms=parseInt(range.value,10)||0;           // le a barra a cada batida
+          const quando = t0 + k*beat - (ms/1000);         // aplica a compensacao
           const osc=state.ctx.createOscillator(), g=state.ctx.createGain();
-          osc.frequency.value = k===0? 1500:1000;
-          g.gain.setValueAtTime(0.0001, t0+k*beat);
-          g.gain.exponentialRampToValueAtTime(0.5, t0+k*beat+0.005);
-          g.gain.exponentialRampToValueAtTime(0.0001, t0+k*beat+0.09);
+          osc.frequency.value = 1000;
+          g.gain.setValueAtTime(0.0001, quando);
+          g.gain.exponentialRampToValueAtTime(0.5, quando+0.005);
+          g.gain.exponentialRampToValueAtTime(0.0001, quando+0.09);
           osc.connect(g); g.connect(state.master||state.ctx.destination);
-          osc.start(t0+k*beat); osc.stop(t0+k*beat+0.1);
+          osc.start(quando); osc.stop(quando+0.1);
         }
       }catch(e){}
     });
@@ -3173,10 +3203,19 @@
     const criar=$('salaCriar'), entrar=$('salaEntrarBtn'), copiar=$('salaCopiar'), sair=$('salaSair');
     if(criar) criar.addEventListener('click', criarSala);
     if(entrar) entrar.addEventListener('click', ()=>{
-      const cod=prompt('Cole o código ou o link da sala:');
+      destravarAudio();
+      const cod=prompt('Digite o NOME da sala (ex: sala01) ou cole o link:');
       if(!cod) return;
-      const m=cod.match(/sala=([\w-]+)/);
-      entrarSala(m? m[1] : cod.trim());
+      let id;
+      const m=cod.match(/sala=([\w-]+)/);   // se colou o link inteiro
+      if(m){ id=m[1]; }
+      else {
+        // digitou so o nome (ou o codigo): normaliza e garante o prefixo orivox-
+        let nome=limparNomeSala(cod);
+        if(!nome){ salaLog('nome invalido'); return; }
+        id = nome.indexOf('orivox-')===0 ? nome : ('orivox-'+nome);
+      }
+      entrarSala(id);
     });
     if(copiar) copiar.addEventListener('click', ()=>{
       const inp=$('salaLink'); if(!inp) return;
