@@ -587,7 +587,7 @@
   <p class="empty-note" id="emptyNote">Dica: se sua música ainda está num arquivo único, separe as pistas gratuitamente com o caderno Orivox Separador (<a href="https://colab.research.google.com/" target="_blank" rel="noopener">Google Colab</a>) ou com o programa <a href="https://ultimatevocalremover.com/" target="_blank" rel="noopener">UVR</a>, e importe os resultados aqui.</p>
 
   <footer>
-    <span class="fm">Orivox</span> · v1.1 · Desenvolvido por Raphael Silveira</footer>
+    <span class="fm">Orivox</span> · v1.2 · Desenvolvido por Raphael Silveira</footer>
 </div>
 
 <div class="sobre-overlay" id="boasVindasOverlay" role="dialog" aria-modal="true" aria-labelledby="boasVindasTitulo">
@@ -2276,7 +2276,9 @@
     if(!state.tracks.length) return;
     if(state.playing){
       pausePlayback();
-      if(typeof SALA!=='undefined' && SALA.ligada && !SALA.aplicando) salaEnviar({tipo:'pausa'});
+      // envia a posicao exata onde pausei, para todos pausarem no MESMO ponto
+      // (assim, ao voltar o play, todos partem juntos, sem desalinhar).
+      if(typeof SALA!=='undefined' && SALA.ligada && !SALA.aplicando) salaEnviar({tipo:'pausa', pos:state.offset});
     } else {
       // Sala ligada: agenda o play num instante futuro comum a todos, para o
       // audio cair junto em cada aparelho (sincronismo por relogio).
@@ -2670,7 +2672,7 @@
   };
   const SALA = {
     peer:null, host:false, conns:[], id:null, meuId:null,
-    ligada:false, aplicando:false, offsetRelogio:0, melhorRtt:undefined,
+    ligada:false, aplicando:false, offsetRelogio:0, melhorRtt:undefined, ancora:null,
     // MALHA: todos conectam com todos. peersConhecidos = ids de todos na sala;
     // assim, se qualquer um (ate o anfitriao) sair, os demais continuam ligados.
     peersConhecidos: {}   // { peerId: true }
@@ -2691,7 +2693,7 @@
   function anunciarPeers(){
     const ids = Object.keys(SALA.peersConhecidos);
     const lista = { tipo:'peersLista', ids: ids };
-    SALA.conns.forEach(c=>{ try{ if(c.open) c.send(JSON.stringify(lista)); }catch(e){} });
+    SALA.conns.forEach(c=>{ if(!c) return; try{ c.send(JSON.stringify(lista)); }catch(e){} });
   }
 
   function salaMsg(txt, on){
@@ -2744,17 +2746,25 @@
     const txt=JSON.stringify(msg);
     let enviados=0, pendentes=0;
     SALA.conns.forEach(c=>{
+      // Firefox as vezes reporta c.open=false com a conexao OK. Entao TENTAMOS
+      // enviar sempre que a conexao existe; so contamos pendente se o send falhar.
+      if(!c) return;
       try{
-        if(c.open){ c.send(txt); enviados++; }
-        else { pendentes++; }
-      }catch(e){}
+        c.send(txt); enviados++;
+      }catch(e){
+        pendentes++;   // realmente nao deu: tenta de novo depois
+      }
     });
     salaLog('enviei "'+msg.tipo+'" para '+enviados+' (aguardando '+pendentes+')');
-    // se algum par ainda nao abriu, reenvia so para eles em 250ms
+    // reenvia aos que falharam, algumas vezes, ate a conexao firmar.
     if(pendentes>0){
-      setTimeout(()=>{
-        SALA.conns.forEach(c=>{ try{ if(c.open) c.send(txt); }catch(e){} });
-      }, 250);
+      let tentativas=0;
+      const retentar=()=>{
+        tentativas++;
+        SALA.conns.forEach(c=>{ if(!c) return; try{ c.send(txt); }catch(e){} });
+        if(tentativas<3) setTimeout(retentar, 300);
+      };
+      setTimeout(retentar, 250);
     }
   }
 
@@ -2793,7 +2803,20 @@
       }
       try{ conn.send(JSON.stringify({tipo:'arqFim', id:idx})); }catch(e){}
     }
-    salaLog('envio de pistas concluido');
+    // Envia o BPM e a config que o anfitriao JA acertou, para o convidado herdar
+    // (em vez de detectar do zero e arriscar errar, ex: bateria x vocal).
+    try{
+      conn.send(JSON.stringify({tipo:'metroConfig',
+        modo: mMode.value, bpm: mBpm.value, meter: mMeter.value,
+        count: $('mCount')? $('mCount').value : undefined,
+        countStyle: $('mCountStyle')? $('mCountStyle').value : undefined,
+        countSub: $('mCountSub')? $('mCountSub').value : undefined,
+        phase: $('mPhase')? $('mPhase').value : undefined,
+        trackMode: mTrackMode? mTrackMode.value : undefined,
+        herdado: 1
+      }));
+    }catch(e){}
+    salaLog('envio de pistas concluido (BPM enviado: '+mBpm.value+')');
   }
 
   function receberArqInicio(msg){
@@ -2803,7 +2826,8 @@
   function receberArqPedaco(msg){
     const r=SALA._recArq[msg.id]; if(!r) return;
     if(r.partes[msg.k]===undefined){ r.partes[msg.k]=msg.d; r.recebidas++; }
-    if(r.recebidas % 20===0) mostrarProgressoArq();
+    // atualiza com frequencia, e SEMPRE quando completa (para mostrar 100%).
+    if(r.recebidas % 5===0 || r.recebidas>=r.total) mostrarProgressoArq();
   }
   async function receberArqFim(msg){
     const r=SALA._recArq[msg.id]; if(!r) return;
@@ -2818,15 +2842,23 @@
       refreshLayout();
     }catch(e){ salaLog('erro ao montar pista recebida'); }
     delete SALA._recArq[msg.id];
-    mostrarProgressoArq();
+    const acabou = Object.keys(SALA._recArq).length===0;
+    mostrarProgressoArq(acabou);
   }
-  function mostrarProgressoArq(){
+  function mostrarProgressoArq(concluiu){
     const ids=Object.keys(SALA._recArq);
     const el=$('salaHint');
     if(!el) return;
-    if(!ids.length){ return; }
+    if(!ids.length){
+      // acabou tudo: mostra 100% brevemente e depois limpa
+      if(concluiu){
+        el.textContent='Pistas recebidas: 100% concluido';
+        setTimeout(()=>{ try{ if(el.textContent.indexOf('100%')>=0) el.textContent=''; }catch(e){} }, 2500);
+      }
+      return;
+    }
     let txt='Recebendo pistas: ';
-    txt += ids.map(id=>{ const r=SALA._recArq[id]; return Math.round(100*r.recebidas/r.total)+'%'; }).join(', ');
+    txt += ids.map(id=>{ const r=SALA._recArq[id]; const p=Math.min(100,Math.round(100*r.recebidas/r.total)); return p+'%'; }).join(', ');
     el.textContent=txt;
   }
 
@@ -2845,7 +2877,7 @@
   // Trata uma mensagem recebida
   function salaReceber(msg, origem){
     // --- sincronizacao de relogio (ping-pong): NUNCA retransmitir (e ponto-a-ponto) ---
-    if(msg.tipo==='ping'){ try{ origem.send(JSON.stringify({tipo:'pong', t0:msg.t0, tHost:Date.now()})); }catch(e){} return; }
+    if(msg.tipo==='ping'){ try{ origem.send(JSON.stringify({tipo:'pong', t0:msg.t0, tHost:Date.now(), de:SALA.meuId})); }catch(e){} return; }
     if(msg.tipo==='pong'){ /* tratado abaixo, nao retransmite */ }
 
     // MALHA: o comando ja e enviado direto a todos por quem origina. Mas se a
@@ -2857,11 +2889,16 @@
       if(retransmitir.indexOf(msg.tipo)>=0){
         const copia = Object.assign({}, msg, {_rt:1});   // marca como retransmitido
         const txt=JSON.stringify(copia);
-        SALA.conns.forEach(c=>{ if(c!==origem && c.open){ try{ c.send(txt); }catch(e){} } });
+        SALA.conns.forEach(c=>{ if(c && c!==origem){ try{ c.send(txt); }catch(e){} } });
       }
     }
 
     if(msg.tipo==='pong'){
+      // Ancora do relogio: so o pong da ancora define o offset comum. Se a ancora
+      // ainda nao existe, o host e a ancora; se sou host, eu sou a ancora (offset 0).
+      if(!SALA.ancora && !SALA.host){ SALA.ancora = SALA._salaAlvo || (msg.de); }
+      if(SALA.host){ SALA.offsetRelogio = 0; return; }        // host: relogio proprio
+      if(msg.de && SALA.ancora && msg.de!==SALA.ancora){ return; }  // ignora pong de nao-ancora
       const rtt = Date.now() - msg.t0;             // ida e volta desta amostra
       const offsetAmostra = (msg.tHost + rtt/2) - Date.now();
       // Mantem uma janela das ultimas 20 amostras (rtt + offset estimado).
@@ -2948,7 +2985,14 @@
       setTimeout(()=>{ if(!state.playing && state.tracks.length){ startPlayback(false, cs); } SALA.aplicando=false; }, esperar);
       return;
     }
-    if(msg.tipo==='pausa'){ SALA.aplicando=true; if(state.playing) pausePlayback(); if(typeof updateTimeUI==='function') updateTimeUI(); SALA.aplicando=false; return; }
+    if(msg.tipo==='pausa'){
+      SALA.aplicando=true;
+      if(state.playing) pausePlayback();
+      // alinha todos na MESMA posicao de quem pausou (para voltar juntos):
+      if(msg.pos!==undefined) state.offset = msg.pos;
+      if(typeof updateTimeUI==='function') updateTimeUI();
+      SALA.aplicando=false; return;
+    }
     if(msg.tipo==='stop'){ SALA.aplicando=true; if(state.playing) pausePlayback(); state.offset=0; if(typeof updateTimeUI==='function') updateTimeUI(); SALA.aplicando=false; return; }
     if(msg.tipo==='metroConfig'){
       SALA.aplicando=true;
@@ -3028,14 +3072,21 @@
       if(conn.peer){ SALA.peersConhecidos[conn.peer]=true; }
       anunciarPeers();
       atualizarPeers();
-      if(!SALA.host){
-        try{ conn.send(JSON.stringify({tipo:'pedeEstado'})); }catch(e){}
-        // rajada inicial rapida (12 pings em 200ms) para cravar o relogio JA,
-        // e depois pings lentos continuos (cada 2s) para manter afinado.
-        let n=0;
-        const rajada=setInterval(()=>{ if(n++>=12||!conn.open){clearInterval(rajada);return;} try{ conn.send(JSON.stringify({tipo:'ping', t0:Date.now()})); }catch(e){} }, 200);
-        SALA._pingCont=setInterval(()=>{ if(!conn.open){clearInterval(SALA._pingCont);return;} try{ conn.send(JSON.stringify({tipo:'ping', t0:Date.now()})); }catch(e){} }, 2000);
-      } else {
+      // pede o estado atual a este par (quem tiver, responde) para o espelho.
+      try{ conn.send(JSON.stringify({tipo:'pedeEstado'})); }catch(e){}
+      // TODOS medem o relogio com este par (nao so convidado->host): na malha,
+      // qualquer um pode ser a referencia de tempo de um comando.
+      // rajada inicial (12 pings em 200ms) para cravar JA; nao para por open=false.
+      let n=0;
+      const rajada=setInterval(()=>{
+        if(n++>=12){ clearInterval(rajada); return; }
+        try{ conn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){}
+      }, 200);
+      // ping continuo por-conexao (cada 2s), guardado por peer para nao vazar.
+      conn._pingCont=setInterval(()=>{
+        try{ conn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){}
+      }, 2000);
+      if(SALA.host){
         try{ conn.send(JSON.stringify(coletarEstado())); salaLog('enviei estado ao convidado'); }catch(e){}
       }
     }
@@ -3047,7 +3098,23 @@
       try{ const msg=JSON.parse(d); salaLog('recebi: '+msg.tipo); salaReceber(msg, conn); }
       catch(e){ salaLog('erro ao ler dado'); }
     });
-    conn.on('close', ()=>{ SALA.conns=SALA.conns.filter(c=>c!==conn); salaLog('conexao fechada'); atualizarPeers(); });
+    conn.on('close', ()=>{
+      try{ if(conn._pingCont) clearInterval(conn._pingCont); }catch(e){}
+      SALA.conns=SALA.conns.filter(c=>c!==conn);
+      // se a ANCORA do relogio caiu, elege uma nova (o menor peerId restante):
+      if(conn.peer && conn.peer===SALA.ancora){
+        const vivos = SALA.conns.map(c=>c.peer).filter(Boolean);
+        if(vivos.length){
+          SALA.ancora = vivos.slice().sort()[0];
+          SALA._amostras = [];   // zera para remedir com a nova ancora
+          salaLog('ancora caiu; nova ancora: '+SALA.ancora);
+        } else {
+          // sozinho: viro minha propria referencia
+          SALA.ancora = SALA.meuId; SALA.offsetRelogio = 0;
+        }
+      }
+      salaLog('conexao fechada'); atualizarPeers();
+    });
     conn.on('error', e=>{ salaLog('erro na conexao: '+(e&&e.type||'?')); });
   }
 
@@ -3119,6 +3186,8 @@
     if(typeof Peer==='undefined'){ salaMsg('indisponível', false); return; }
     destravarAudio();
     SALA.host=false;
+    SALA._salaAlvo = idSala;          // guarda o alvo para reconectar se cair
+    SALA._saiuDeProposito = false;    // so true quando o usuario clica em "Sair"
     SALA.peer=new Peer({ config: CONFIG_ICE });
     salaMsg('entrando...', true);
     SALA.peer.on('open', (meuId)=>{
@@ -3127,6 +3196,7 @@
       SALA.meuId=meuId;
       SALA.peersConhecidos[meuId]=true;
       SALA.peersConhecidos[idSala]=true;
+      SALA.ancora = idSala;    // o anfitriao e a ancora do relogio
       prepararRecepcaoDeVoz();
       const conn=SALA.peer.connect(idSala, {reliable:true});
       conectarEventos(conn);
@@ -3140,11 +3210,65 @@
     // MALHA: o convidado tambem aceita conexoes de OUTROS convidados.
     SALA.peer.on('connection', conn=>{ salaLog('outro par conectando (malha)...'); conectarEventos(conn); });
     prepararRecepcaoDeVoz();
-    SALA.peer.on('error', e=>{ salaMsg('sala não encontrada', false); salaLog('ERRO peer: '+(e&&e.type||'?')); });
+    // RECONEXAO: ao perder o servidor de sinalizacao (troca de rede), reconecta.
+    SALA.peer.on('disconnected', ()=>{
+      if(SALA._saiuDeProposito) return;
+      salaLog('conexao caiu (troca de rede?): reconectando...');
+      salaMsg('reconectando...', true);
+      tentarReconectar();
+    });
+    SALA.peer.on('error', e=>{
+      const tipo=(e&&e.type)||'?';
+      salaLog('ERRO peer: '+tipo);
+      // erros recuperaveis: tenta reconectar em vez de desistir.
+      if(!SALA._saiuDeProposito && (tipo==='network' || tipo==='disconnected' || tipo==='peer-unavailable' || tipo==='server-error')){
+        salaMsg('reconectando...', true);
+        tentarReconectar();
+      } else {
+        salaMsg('sala não encontrada', false);
+      }
+    });
+  }
+
+  // Reconecta sozinho, com tentativas espacadas, sem o usuario fazer nada.
+  function tentarReconectar(){
+    if(SALA._saiuDeProposito || !SALA._salaAlvo) return;
+    if(SALA._reconectando) return;    // ja esta tentando
+    SALA._reconectando = true;
+    let tentativa = 0;
+    const tenta = ()=>{
+      if(SALA._saiuDeProposito){ SALA._reconectando=false; return; }
+      tentativa++;
+      try{
+        // se o peer so perdeu o servidor mas ainda existe, tenta reconectar rapido.
+        if(SALA.peer && !SALA.peer.destroyed && SALA.peer.disconnected){
+          try{ SALA.peer.reconnect(); salaLog('reconnect() tentativa '+tentativa); }catch(e){}
+        } else {
+          // peer morreu: recria e entra de novo na mesma sala.
+          try{ SALA.peer && SALA.peer.destroy(); }catch(e){}
+          SALA.conns=[];
+          salaLog('recriando conexao, tentativa '+tentativa);
+          entrarSala(SALA._salaAlvo);
+          SALA._reconectando=false;
+          return;   // entrarSala reinicia o fluxo
+        }
+      }catch(e){ salaLog('falha na reconexao: '+e.message); }
+      // agenda proxima tentativa se ainda nao voltou (ate ~10 tentativas)
+      if(tentativa<10 && !SALA._saiuDeProposito){
+        setTimeout(()=>{
+          if(SALA.peer && SALA.peer.disconnected && !SALA.peer.destroyed){ tenta(); }
+          else { SALA._reconectando=false; salaLog('reconectado.'); salaMsg('na sala', true); }
+        }, Math.min(500*tentativa, 3000));
+      } else { SALA._reconectando=false; }
+    };
+    tenta();
   }
 
   function sairSala(){
-    try{ SALA.conns.forEach(c=>c.close()); }catch(e){}
+    SALA._saiuDeProposito = true;      // impede a reconexao automatica
+    SALA._reconectando = false;
+    SALA._salaAlvo = null;
+    try{ SALA.conns.forEach(c=>{ try{ if(c._pingCont) clearInterval(c._pingCont); }catch(e){} c.close(); }); }catch(e){}
     try{ SALA.peer && SALA.peer.destroy(); }catch(e){}
     SALA.peer=null; SALA.conns=[]; SALA.ligada=false; SALA.host=false;
     salaMsg('desligada', false);
@@ -3521,19 +3645,27 @@
   // re-suspende facil. Este destravador escuta QUALQUER toque/clique e retoma
   // o audio na hora. Roda sempre que o contexto estiver suspenso.
   (function destravadorGlobal(){
+    let jaDestravou=false;
     function retomar(){
       try{
-        if(!state.ctx){ if(typeof ensureCtx==='function') ensureCtx(); }
-        if(state.ctx && state.ctx.state==='suspended'){
+        if(!state.ctx) return;   // so age se o audio ja existe
+        if(state.ctx.state==='suspended'){
           state.ctx.resume();
-          // som mudo de 1 amostra para confirmar o destravamento
-          const b=state.ctx.createBuffer(1,1,22050);
-          const s=state.ctx.createBufferSource(); s.buffer=b;
-          s.connect(state.ctx.destination); s.start(0);
+          // som mudo SO na primeira vez e SO se nao estiver tocando (evita
+          // interferir na cadeia de audio que ja esta rolando -> sem trepidacao).
+          if(!jaDestravou && !state.playing){
+            jaDestravou=true;
+            try{
+              const b=state.ctx.createBuffer(1,1,22050);
+              const s=state.ctx.createBufferSource(); s.buffer=b;
+              s.connect(state.ctx.destination); s.start(0);
+            }catch(e){}
+          }
         }
       }catch(e){}
     }
-    ['touchend','touchstart','click','pointerdown'].forEach(ev=>{
+    // basta 2 eventos (nao os 4): menos disparos, sem redundancia.
+    ['pointerdown','touchend'].forEach(ev=>{
       document.addEventListener(ev, retomar, {passive:true});
     });
   })();
@@ -3541,22 +3673,30 @@
   // ---- iPhone/Safari suspende abas em segundo plano. Ao VOLTAR para a aba,
   // reacorda o audio e re-sincroniza com a sala (pede o estado atual). ----
   (function reativarAoVoltar(){
-    document.addEventListener('visibilitychange', ()=>{
-      if(document.visibilityState==='visible'){
-        try{ if(state.ctx && state.ctx.state==='suspended') state.ctx.resume(); }catch(e){}
-        // se estou numa sala como convidado, pede o estado atual para re-sincronizar
-        try{
-          if(typeof SALA!=='undefined' && SALA.ligada && !SALA.host && SALA.conns){
-            SALA.conns.forEach(cn=>{ try{ if(cn.open) cn.send(JSON.stringify({tipo:'pedeEstado'})); }catch(e){} });
-            salaLog('voltou a aba: re-sincronizando...');
-          }
-        }catch(e){}
-      }
-    });
-    // no iOS, um toque na tela tambem reacorda o audio
-    document.addEventListener('touchstart', ()=>{
+    function reafinar(){
       try{ if(state.ctx && state.ctx.state==='suspended') state.ctx.resume(); }catch(e){}
-    }, {passive:true});
+      try{
+        if(typeof SALA!=='undefined' && SALA.ligada && SALA.conns && SALA.conns.length){
+          // rajada de pings para reafinar o relogio JA (o timer fica lento em 2o
+          // plano e o relogio desatualiza; isto recrava ao voltar).
+          let n=0;
+          const rajada=setInterval(()=>{
+            if(n++>=8){ clearInterval(rajada); return; }
+            SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){} });
+          }, 150);
+          // pede o estado atual para re-espelhar (BPM, modo, mutes, posicao...).
+          SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'pedeEstado'})); }catch(e){} });
+          salaLog('voltou/ativou: reafinando relogio e re-sincronizando...');
+          // se o peer perdeu o servidor enquanto minimizado, reconecta.
+          if(SALA.peer && SALA.peer.disconnected && !SALA._saiuDeProposito){ tentarReconectar(); }
+        }
+      }catch(e){}
+    }
+    document.addEventListener('visibilitychange', ()=>{
+      if(document.visibilityState==='visible') reafinar();
+    });
+    // tambem reafina ao voltar o foco (cobre casos onde visibilitychange nao dispara)
+    window.addEventListener('focus', reafinar);
   })();
 
 })();
