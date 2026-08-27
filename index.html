@@ -52,9 +52,14 @@
   .sala-fone{margin-top:12px;padding:12px;background:var(--panel-2);border:1px solid var(--line);border-radius:10px}
   .sala-fone-topo{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:var(--ink);margin-bottom:8px}
   .sala-fone-val{font-family:'IBM Plex Mono',monospace;color:var(--gold-soft);font-size:13px}
-  .sala-fone-range{width:100%;-webkit-appearance:none;appearance:none;height:8px;border-radius:5px;background:linear-gradient(90deg,var(--gold) 0%,var(--gold) var(--fill,0%),var(--line) var(--fill,0%),var(--line) 100%);outline:none;cursor:pointer}
-  .sala-fone-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:22px;height:22px;border-radius:50%;background:var(--gold-soft);border:3px solid var(--panel);cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.4)}
-  .sala-fone-range::-moz-range-thumb{width:22px;height:22px;border-radius:50%;background:var(--gold-soft);border:3px solid var(--panel);cursor:pointer}
+  .sala-fone-num{display:flex;align-items:center;gap:6px}
+  .sala-fone-num input{width:64px;background:var(--panel);border:1px solid var(--line);color:var(--gold-soft);border-radius:8px;padding:5px 8px;font-size:16px;font-family:'IBM Plex Mono',monospace;text-align:center}
+  .sala-fone-num span{font-size:11px;color:var(--muted)}
+  .sala-fone-seta{width:30px;height:30px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .sala-fone-seta:hover{border-color:var(--gold);color:var(--gold-soft)}
+  /* barra estilo "tanque de gasolina": enche e muda vermelho->laranja->verde */
+  .sala-fone-barra{width:100%;height:16px;border-radius:8px;background:var(--panel);border:1px solid var(--line);overflow:hidden;margin-top:4px}
+  .sala-fone-cheio{height:100%;width:0%;border-radius:8px 0 0 8px;transition:width .12s linear, background-color .12s linear;background:#E0533A}
   .sala-fone-hint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5}
   .sala-diag{margin-top:4px}
   .sala-diag summary{font-size:11px;color:var(--muted);cursor:pointer}
@@ -394,12 +399,16 @@
       <div class="sala-hint" id="salaHint">Todos precisam importar a MESMA música. Os comandos (play, volume, mudo, solo) são compartilhados.</div>
       <div class="sala-fone">
         <div class="sala-fone-topo">
-          <span>Ajuste do meu fone</span>
-          <span class="sala-fone-val" id="foneVal">0 ms</span>
+          <span>Calibragem do meu fone (Bluetooth)</span>
+          <div class="sala-fone-num">
+            <button class="sala-fone-seta" id="foneMenos" aria-label="Diminuir ms">&minus;</button>
+            <input type="number" id="foneNum" value="0" min="0" max="300" step="1" inputmode="numeric"> <span>ms</span>
+            <button class="sala-fone-seta" id="foneMais" aria-label="Aumentar ms">+</button>
+          </div>
         </div>
-        <input type="range" id="foneCal" min="0" max="300" step="5" value="0" class="sala-fone-range">
-        <div class="sala-fone-hint">Se você usa fone Bluetooth e o som chega atrasado, arraste para a direita até sentir no tempo. Fone com fio: deixe em 0.</div>
-        <button class="btn btn-ghost btn-sm" id="foneTeste" style="margin-top:6px">Tocar teste (4 batidas)</button>
+        <div class="sala-fone-barra" id="foneBarra"><div class="sala-fone-cheio" id="foneCheio"></div></div>
+        <button class="btn btn-gold btn-sm" id="foneCal" style="margin-top:8px;width:100%">Iniciar calibragem Bluetooth</button>
+        <div class="sala-fone-hint">Com a música tocando na sala, toque em iniciar: a barra vai subindo os ms. Quando o SEU som fincar junto com os outros aparelhos, toque de novo para travar. Depois, afine nas setas. Fone com fio: deixe em 0.</div>
       </div>
       <details class="sala-diag">
         <summary>Diagnóstico da conexão</summary>
@@ -578,7 +587,7 @@
   <p class="empty-note" id="emptyNote">Dica: se sua música ainda está num arquivo único, separe as pistas gratuitamente com o caderno Orivox Separador (<a href="https://colab.research.google.com/" target="_blank" rel="noopener">Google Colab</a>) ou com o programa <a href="https://ultimatevocalremover.com/" target="_blank" rel="noopener">UVR</a>, e importe os resultados aqui.</p>
 
   <footer>
-    <span class="fm">Orivox</span> · v1.0 · Desenvolvido por Raphael Silveira</footer>
+    <span class="fm">Orivox</span> · v1.1 · Desenvolvido por Raphael Silveira</footer>
 </div>
 
 <div class="sobre-overlay" id="boasVindasOverlay" role="dialog" aria-modal="true" aria-labelledby="boasVindasTitulo">
@@ -2647,10 +2656,43 @@
      - Reconexao: atualizar a pagina sai da sala; reabrir o link
        (ou digitar o codigo) reconecta e recebe o estado atual.
      ============================================================ */
-  const SALA = {
-    peer:null, host:false, conns:[], id:null,
-    ligada:false, aplicando:false, offsetRelogio:0, melhorRtt:undefined
+  // Servidores STUN (gratuitos e publicos) para a conexao funcionar entre redes
+  // DIFERENTES (nao so na mesma rede local). Sem isso, dois aparelhos em redes
+  // distintas nao conseguem se descobrir pela internet.
+  const CONFIG_ICE = {
+    'iceServers': [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' }
+    ]
   };
+  const SALA = {
+    peer:null, host:false, conns:[], id:null, meuId:null,
+    ligada:false, aplicando:false, offsetRelogio:0, melhorRtt:undefined,
+    // MALHA: todos conectam com todos. peersConhecidos = ids de todos na sala;
+    // assim, se qualquer um (ate o anfitriao) sair, os demais continuam ligados.
+    peersConhecidos: {}   // { peerId: true }
+  };
+  // conecta a um peer especifico (se ainda nao conectado). Usado para formar a malha.
+  function conectarAoPeer(peerId){
+    if(!peerId || !SALA.peer) return;
+    if(peerId===SALA.meuId) return;                       // nao a mim mesmo
+    if(SALA.conns.some(c=>c.peer===peerId)) return;       // ja conectado
+    try{
+      const conn=SALA.peer.connect(peerId, {reliable:true});
+      conectarEventos(conn);
+      salaLog('conectando ao par '+peerId+' (malha)');
+    }catch(e){ salaLog('falha ao conectar em '+peerId); }
+  }
+  // avisa todos os meus pares sobre a lista de quem esta na sala, para todos
+  // se conectarem entre si (formar a malha).
+  function anunciarPeers(){
+    const ids = Object.keys(SALA.peersConhecidos);
+    const lista = { tipo:'peersLista', ids: ids };
+    SALA.conns.forEach(c=>{ try{ if(c.open) c.send(JSON.stringify(lista)); }catch(e){} });
+  }
 
   function salaMsg(txt, on){
     const s=$('salaStatus'); if(!s) return;
@@ -2806,13 +2848,15 @@
     if(msg.tipo==='ping'){ try{ origem.send(JSON.stringify({tipo:'pong', t0:msg.t0, tHost:Date.now()})); }catch(e){} return; }
     if(msg.tipo==='pong'){ /* tratado abaixo, nao retransmite */ }
 
-    // RETRANSMISSAO (topologia estrela): se EU sou o anfitriao e recebi um comando
-    // de um convidado, repasso aos OUTROS convidados, para todos ficarem em sincronia.
-    // So retransmite comandos de sala (nao ping/pong, nao dados de arquivo grandes).
-    if(SALA.host && origem){
-      const retransmitir = ['play','pausa','stop','seek','estado','metroPlay','metroStop','metroBpm','metroPlayPedido','pista','loop','metroConfig'];
+    // MALHA: o comando ja e enviado direto a todos por quem origina. Mas se a
+    // malha ainda esta se formando (alguem so conectado a um par), retransmitimos
+    // uma vez para garantir a entrega. Protecao anti-eco: so retransmite comandos
+    // de sala e nunca um comando ja marcado como retransmitido.
+    if(origem && !msg._rt){
+      const retransmitir = ['play','pausa','stop','seek','metroPlay','metroStop','metroBpm','metroPlayPedido','pista','loop','metroConfig'];
       if(retransmitir.indexOf(msg.tipo)>=0){
-        const txt=JSON.stringify(msg);
+        const copia = Object.assign({}, msg, {_rt:1});   // marca como retransmitido
+        const txt=JSON.stringify(copia);
         SALA.conns.forEach(c=>{ if(c!==origem && c.open){ try{ c.send(txt); }catch(e){} } });
       }
     }
@@ -2858,9 +2902,16 @@
       SALA.aplicando=true;
       $('smBpm').value=msg.bpm; SALA._metro.bpm=msg.bpm;
       ensureCtx(); if(state.ctx.state==='suspended') state.ctx.resume();
-      // usa a MESMA EPOCA do anfitriao: todos na mesma grade -> mesma fase, sem galope.
-      SALA._metro.epoca = msg.epoca;
-      SALA._metro._ultimoK = undefined;   // reset do controle de beats agendados
+      // MALHA: converte a epoca do EMISSOR para o meu relogio. Uso o offset que
+      // medi (Date.now local + offset = relogio comum). A epoca do emissor esta
+      // no relogio comum (o do emissor + o offset dele ~ 0 se for a referencia).
+      if(msg.epocaEmissor!==undefined){
+        // desvio entre o relogio do emissor e o meu, estimado pelo offset medido:
+        SALA._metro.epoca = msg.epocaEmissor - (SALA.offsetRelogio||0);
+      } else {
+        SALA._metro.epoca = msg.epoca;   // compat. com formato antigo
+      }
+      SALA._metro._ultimoK = undefined;
       SALA._metro.tocando=true; smAgendarBloco(); atualizarBotaoSmPlay();
       SALA.aplicando=false; return;
     }
@@ -2909,6 +2960,12 @@
       if(msg.countSub!==undefined && $('mCountSub')) $('mCountSub').value=msg.countSub;
       if(msg.phase!==undefined && $('mPhase')) $('mPhase').value=msg.phase;
       if(msg.trackMode!==undefined && mTrackMode) mTrackMode.value=msg.trackMode;
+      // se a musica esta tocando, reinicia na mesma posicao para o novo metronomo
+      // valer JA (senao o modo/BPM so mudaria no proximo play).
+      if(state.playing){
+        const p = Math.max(0, currentPos());
+        pausePlayback(); state.offset=p; startPlayback(true);
+      }
       SALA.aplicando=false; return;
     }
     if(msg.tipo==='loop'){
@@ -2929,7 +2986,23 @@
       SALA.aplicando=false; return;
     }
     if(msg.tipo==='seek'){ SALA.aplicando=true; if(typeof seekTo==='function') seekTo(msg.pos); SALA.aplicando=false; return; }
-    if(msg.tipo==='pedeEstado'){ if(SALA.host && origem){ try{ origem.send(JSON.stringify(coletarEstado())); }catch(e){} } return; }
+    if(msg.tipo==='peersLista'){
+      // recebi a lista de quem esta na sala: registro todos e conecto aos que faltam.
+      (msg.ids||[]).forEach(pid=>{
+        if(pid && pid!==SALA.meuId){
+          const novo = !SALA.peersConhecidos[pid];
+          SALA.peersConhecidos[pid]=true;
+          if(novo) conectarAoPeer(pid);   // forma a malha com o novo par
+        }
+      });
+      return;
+    }
+    if(msg.tipo==='pedeEstado'){
+      // qualquer um que TENHA estado responde (nao so o host): assim quem entra
+      // recebe o estado mesmo que o anfitriao tenha saido.
+      if(origem && state.tracks.length){ try{ origem.send(JSON.stringify(coletarEstado())); }catch(e){} }
+      return;
+    }
     if(msg.tipo==='ola'){ atualizarPeers(); return; }
   }
 
@@ -2950,6 +3023,10 @@
 
     function aoAbrir(){
       salaLog('conexao ABERTA com '+(conn.peer||'par'));
+      // MALHA: registra este par e conta a todos quem esta na sala, para todos
+      // se conectarem entre si. Assim ninguem depende so do anfitriao.
+      if(conn.peer){ SALA.peersConhecidos[conn.peer]=true; }
+      anunciarPeers();
       atualizarPeers();
       if(!SALA.host){
         try{ conn.send(JSON.stringify({tipo:'pedeEstado'})); }catch(e){}
@@ -3008,10 +3085,12 @@
     if(!nome) nome = idAleatorio().replace('orivox-','');   // vazio: gera um
     SALA.host=true;
     SALA.id='orivox-'+nome;              // o id do PeerJS precisa ser unico e valido
-    SALA.peer=new Peer(SALA.id);
+    SALA.peer=new Peer(SALA.id, { config: CONFIG_ICE });
     salaMsg('conectando...', true);
     SALA.peer.on('open', id=>{
       SALA.ligada=true;
+      SALA.meuId=id;
+      SALA.peersConhecidos[id]=true;
       salaMsg('sala aberta', true);
       salaLog('sala criada: '+id);
       refreshLayout();
@@ -3040,11 +3119,14 @@
     if(typeof Peer==='undefined'){ salaMsg('indisponível', false); return; }
     destravarAudio();
     SALA.host=false;
-    SALA.peer=new Peer();
+    SALA.peer=new Peer({ config: CONFIG_ICE });
     salaMsg('entrando...', true);
     SALA.peer.on('open', (meuId)=>{
       salaLog('meu peer abriu ('+meuId+'), conectando a '+idSala);
       SALA.ligada=true;
+      SALA.meuId=meuId;
+      SALA.peersConhecidos[meuId]=true;
+      SALA.peersConhecidos[idSala]=true;
       prepararRecepcaoDeVoz();
       const conn=SALA.peer.connect(idSala, {reliable:true});
       conectarEventos(conn);
@@ -3055,6 +3137,9 @@
       $('salaAcoes').classList.add('hidden');
       $('salaConectada').classList.remove('hidden');
     });
+    // MALHA: o convidado tambem aceita conexoes de OUTROS convidados.
+    SALA.peer.on('connection', conn=>{ salaLog('outro par conectando (malha)...'); conectarEventos(conn); });
+    prepararRecepcaoDeVoz();
     SALA.peer.on('error', e=>{ salaMsg('sala não encontrada', false); salaLog('ERRO peer: '+(e&&e.type||'?')); });
   }
 
@@ -3157,6 +3242,8 @@
   // Cadeia de audio LOCAL do metronomo simples: volume + direcao L/R, por usuario.
   function smGarantirCadeia(){
     ensureCtx();
+    // iPhone: se o contexto suspendeu (troca de aba), reacorda antes de tocar.
+    if(state.ctx.state==='suspended'){ try{ state.ctx.resume(); }catch(e){} }
     if(!SALA._metro.gain){
       SALA._metro.gain = state.ctx.createGain();
       const vol = ($('smVol')? parseInt($('smVol').value,10):60)/100;
@@ -3206,24 +3293,22 @@
 
   function smIniciar(sincronizar){
     ensureCtx();
-    if(state.ctx.state==='suspended') state.ctx.resume();
+    // iPhone: o toque no botao "Iniciar click" e um gesto valido; reacorda o audio.
+    try{ if(state.ctx.state==='suspended') state.ctx.resume(); }catch(e){}
+    try{ destravarAudio(); }catch(e){}
     SALA._metro.bpm = parseInt($('smBpm').value,10)||100;
     if(sincronizar!==false && SALA.ligada && !SALA.aplicando){
-      if(SALA.host){
-        // O anfitriao e o maestro: define a epoca no SEU relogio (offset 0) e
-        // distribui a todos. Damos folga para todos receberem antes do beat 0.
-        const epoca = Date.now() + 1000;   // host: relogio comum = seu proprio relogio
-        SALA._metro.epoca = epoca;
-        SALA._metro._ultimoK = undefined;
-        SALA._metro.tocando = true;
-        salaEnviar({tipo:'metroPlay', epoca:epoca, bpm:SALA._metro.bpm});
-        smAgendarBloco();
-      } else {
-        // Convidado: NAO define a epoca sozinho (seu relogio nao e a referencia).
-        // Pede ao anfitriao, que define e distribui a todos (inclusive de volta a ele).
-        salaEnviar({tipo:'metroPlayPedido', bpm:SALA._metro.bpm});
-        // nao marca tocando ainda: espera o metroPlay do anfitriao
-      }
+      // MALHA: quem aciona define a epoca no PROPRIO relogio e envia a todos.
+      // Envia tambem o "tEmissor" (o Date.now do emissor no momento), para cada
+      // receptor converter para o seu relogio usando o offset que mediu.
+      const agoraLocal = Date.now();
+      const epocaLocal = agoraLocal + 1000;   // 1s de folga para todos receberem
+      SALA._metro.epoca = epocaLocal;          // no meu relogio, epoca e assim
+      SALA._metro._ultimoK = undefined;
+      SALA._metro.tocando = true;
+      smAgendarBloco();
+      // envia a epoca EM RELACAO ao emissor: cada um ajusta pelo seu offset.
+      salaEnviar({tipo:'metroPlay', epocaEmissor:epocaLocal, tEmissor:agoraLocal, bpm:SALA._metro.bpm});
     } else {
       // sozinho (fora de sala): epoca no proprio relogio
       SALA._metro.epoca = Date.now() + 120;
@@ -3292,39 +3377,62 @@
 
   // ---- Calibracao de fone (Frente 4) ----
   (function ligarFone(){
-    const range=$('foneCal'), val=$('foneVal'), teste=$('foneTeste');
-    if(!range) return;
-    function aplica(){
-      const ms=parseInt(range.value,10)||0;
+    const btn=$('foneCal'), num=$('foneNum'), cheio=$('foneCheio'),
+          mais=$('foneMais'), menos=$('foneMenos');
+    if(!btn || !num) return;
+    const MAX=300;
+    let rodando=false, timer=null;
+
+    // aplica o valor: guarda na calibragem, atualiza numero e barra (cor+largura)
+    function aplica(ms){
+      ms=Math.max(0,Math.min(MAX, Math.round(ms)));
       if(typeof SALA!=='undefined') SALA.foneCalib=ms;
-      if(val) val.textContent=ms+' ms';
-      range.style.setProperty('--fill', (ms/300*100)+'%');
+      num.value=ms;
+      const pct=ms/MAX;
+      if(cheio){
+        cheio.style.width=(pct*100)+'%';
+        // cor: vermelho (0) -> laranja (meio) -> verde (cheio)
+        let cor;
+        if(pct<0.5){ cor='#E0533A'; }                 // vermelho
+        else if(pct<0.8){ cor='#E89B3C'; }            // laranja
+        else { cor='#2AD4C8'; }                        // verde-turquesa (Orivox)
+        cheio.style.background=cor;
+      }
     }
-    range.addEventListener('input', aplica);
-    aplica();
-    // Teste do fone: toca 8 batidas, e a CADA batida aplica a compensacao atual.
-    // Assim, se voce mexer na barra ENQUANTO ouve, sente o click se ajustar.
-    // (A calibracao serve para o click do SEU aparelho casar com o dos outros na
-    // sala; sozinho, use este teste so para conferir que a barra responde.)
-    if(teste) teste.addEventListener('click', ()=>{
-      try{
-        ensureCtx();
-        if(state.ctx.state==='suspended') state.ctx.resume();
-        const beat=0.5;  // 120 BPM
-        const t0=state.ctx.currentTime+0.15;
-        for(let k=0;k<8;k++){
-          const ms=parseInt(range.value,10)||0;           // le a barra a cada batida
-          const quando = t0 + k*beat - (ms/1000);         // aplica a compensacao
-          const osc=state.ctx.createOscillator(), g=state.ctx.createGain();
-          osc.frequency.value = 1000;
-          g.gain.setValueAtTime(0.0001, quando);
-          g.gain.exponentialRampToValueAtTime(0.5, quando+0.005);
-          g.gain.exponentialRampToValueAtTime(0.0001, quando+0.09);
-          osc.connect(g); g.connect(state.master||state.ctx.destination);
-          osc.start(quando); osc.stop(quando+0.1);
-        }
-      }catch(e){}
-    });
+    aplica(0);
+
+    // play/pause: 1o clique comeca a encher; 2o clique trava no valor atual
+    function alterna(){
+      if(rodando){ parar(); return; }
+      rodando=true;
+      btn.textContent='Travar aqui (calibrando...)';
+      btn.classList.add('mute-on');
+      const inicio=performance.now();
+      const base=parseInt(num.value,10)||0;
+      const DUR=7000;   // ~7s para varrer de 0 a 300 (ritmo confortavel)
+      function passo(){
+        if(!rodando) return;
+        const t=(performance.now()-inicio)/DUR;      // 0..1
+        let ms=base + t*MAX;
+        if(ms>=MAX){ ms=MAX; aplica(ms); parar(); return; }  // encheu: para no maximo
+        aplica(ms);
+        timer=requestAnimationFrame(passo);
+      }
+      timer=requestAnimationFrame(passo);
+    }
+    function parar(){
+      rodando=false;
+      if(timer){ cancelAnimationFrame(timer); timer=null; }
+      btn.textContent='Iniciar calibragem Bluetooth';
+      btn.classList.remove('mute-on');
+    }
+    btn.addEventListener('click', alterna);
+
+    // numero editavel (como o BPM) + setas de ajuste fino
+    num.addEventListener('change', ()=>{ if(rodando) parar(); aplica(parseInt(num.value,10)||0); });
+    num.addEventListener('input', ()=>{ aplica(parseInt(num.value,10)||0); });
+    if(mais) mais.addEventListener('click', ()=>{ if(rodando) parar(); aplica((parseInt(num.value,10)||0)+1); });
+    if(menos) menos.addEventListener('click', ()=>{ if(rodando) parar(); aplica((parseInt(num.value,10)||0)-1); });
   })();
 
   // ---- Ligacao dos botoes ----
@@ -3388,6 +3496,67 @@
         if(SALA.ligada && !SALA.aplicando){ salaEnviar(coletarEstado()); }
       };
     }
+  })();
+
+  // ---- Aviso do modo silencioso no iOS ----
+  // No iPhone/iPad, a chavinha lateral de silencioso BLOQUEIA o som da web
+  // (mesmo tudo certo). O Spotify toca por ser app nativo; sites nao. Nao da
+  // para contornar por codigo, entao avisamos o usuario uma vez.
+  (function avisoIOS(){
+    const ehIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                  (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+    if(ehIOS){
+      const hint=$('salaHint');
+      if(hint){
+        const aviso=document.createElement('div');
+        aviso.style.cssText='margin-top:8px;font-size:11px;color:var(--gold-soft);line-height:1.5';
+        aviso.textContent='iPhone/iPad: se nao sair som, verifique a chavinha lateral de silencioso (ela bloqueia o audio no navegador) e aumente o volume.';
+        hint.parentNode.insertBefore(aviso, hint.nextSibling);
+      }
+    }
+  })();
+
+  // ---- Destravador de audio para iOS/Safari ----
+  // O iPhone so libera o audio da web dentro de um gesto real do usuario, e
+  // re-suspende facil. Este destravador escuta QUALQUER toque/clique e retoma
+  // o audio na hora. Roda sempre que o contexto estiver suspenso.
+  (function destravadorGlobal(){
+    function retomar(){
+      try{
+        if(!state.ctx){ if(typeof ensureCtx==='function') ensureCtx(); }
+        if(state.ctx && state.ctx.state==='suspended'){
+          state.ctx.resume();
+          // som mudo de 1 amostra para confirmar o destravamento
+          const b=state.ctx.createBuffer(1,1,22050);
+          const s=state.ctx.createBufferSource(); s.buffer=b;
+          s.connect(state.ctx.destination); s.start(0);
+        }
+      }catch(e){}
+    }
+    ['touchend','touchstart','click','pointerdown'].forEach(ev=>{
+      document.addEventListener(ev, retomar, {passive:true});
+    });
+  })();
+
+  // ---- iPhone/Safari suspende abas em segundo plano. Ao VOLTAR para a aba,
+  // reacorda o audio e re-sincroniza com a sala (pede o estado atual). ----
+  (function reativarAoVoltar(){
+    document.addEventListener('visibilitychange', ()=>{
+      if(document.visibilityState==='visible'){
+        try{ if(state.ctx && state.ctx.state==='suspended') state.ctx.resume(); }catch(e){}
+        // se estou numa sala como convidado, pede o estado atual para re-sincronizar
+        try{
+          if(typeof SALA!=='undefined' && SALA.ligada && !SALA.host && SALA.conns){
+            SALA.conns.forEach(cn=>{ try{ if(cn.open) cn.send(JSON.stringify({tipo:'pedeEstado'})); }catch(e){} });
+            salaLog('voltou a aba: re-sincronizando...');
+          }
+        }catch(e){}
+      }
+    });
+    // no iOS, um toque na tela tambem reacorda o audio
+    document.addEventListener('touchstart', ()=>{
+      try{ if(state.ctx && state.ctx.state==='suspended') state.ctx.resume(); }catch(e){}
+    }, {passive:true});
   })();
 
 })();
