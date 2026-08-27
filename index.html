@@ -587,7 +587,7 @@
   <p class="empty-note" id="emptyNote">Dica: se sua música ainda está num arquivo único, separe as pistas gratuitamente com o caderno Orivox Separador (<a href="https://colab.research.google.com/" target="_blank" rel="noopener">Google Colab</a>) ou com o programa <a href="https://ultimatevocalremover.com/" target="_blank" rel="noopener">UVR</a>, e importe os resultados aqui.</p>
 
   <footer>
-    <span class="fm">Orivox</span> · v1.2 · Desenvolvido por Raphael Silveira</footer>
+    <span class="fm">Orivox</span> · v1.3 · Desenvolvido por Raphael Silveira</footer>
 </div>
 
 <div class="sobre-overlay" id="boasVindasOverlay" role="dialog" aria-modal="true" aria-labelledby="boasVindasTitulo">
@@ -2926,11 +2926,11 @@
       if(SALA.host){
         SALA.aplicando=true;
         if(msg.bpm){ $('smBpm').value=msg.bpm; SALA._metro.bpm=msg.bpm; }
-        const epoca = Date.now() + 1000;
-        SALA._metro.epoca = epoca; SALA._metro._ultimoK=undefined; SALA._metro.tocando=true;
+        const quando = Date.now() + (SALA.offsetRelogio||0) + 700;
         ensureCtx(); if(state.ctx.state==='suspended') state.ctx.resume();
+        SALA._metro.t0 = smQuandoParaAudio(quando); SALA._metro.tocando=true;
         smAgendarBloco(); atualizarBotaoSmPlay();
-        salaEnviar({tipo:'metroPlay', epoca:epoca, bpm:SALA._metro.bpm});
+        salaEnviar({tipo:'metroPlay', quando:quando, bpm:SALA._metro.bpm});
         SALA.aplicando=false;
       }
       return;
@@ -2939,16 +2939,10 @@
       SALA.aplicando=true;
       $('smBpm').value=msg.bpm; SALA._metro.bpm=msg.bpm;
       ensureCtx(); if(state.ctx.state==='suspended') state.ctx.resume();
-      // MALHA: converte a epoca do EMISSOR para o meu relogio. Uso o offset que
-      // medi (Date.now local + offset = relogio comum). A epoca do emissor esta
-      // no relogio comum (o do emissor + o offset dele ~ 0 se for a referencia).
-      if(msg.epocaEmissor!==undefined){
-        // desvio entre o relogio do emissor e o meu, estimado pelo offset medido:
-        SALA._metro.epoca = msg.epocaEmissor - (SALA.offsetRelogio||0);
-      } else {
-        SALA._metro.epoca = msg.epoca;   // compat. com formato antigo
-      }
-      SALA._metro._ultimoK = undefined;
+      // MESMA conversao que o anfitriao usou: t0 fixo no relogio de audio, o click
+      // corre constante a partir dai (sem reler o offset, sem cavalgar).
+      const quando = (msg.quando!==undefined)? msg.quando : (msg.epocaEmissor||Date.now());
+      SALA._metro.t0 = smQuandoParaAudio(quando);
       SALA._metro.tocando=true; smAgendarBloco(); atualizarBotaoSmPlay();
       SALA.aplicando=false; return;
     }
@@ -2959,10 +2953,10 @@
       // se estava tocando, o anfitriao re-emite a epoca para todos re-sincronizarem
       if(SALA._metro.tocando){
         if(SALA.host){
-          const epoca = Date.now() + 1000;
-          SALA._metro.epoca=epoca; SALA._metro._ultimoK=undefined;
-          smParar(false); SALA._metro.tocando=true; smAgendarBloco();
-          salaEnviar({tipo:'metroPlay', epoca:epoca, bpm:SALA._metro.bpm});
+          const quando = Date.now() + (SALA.offsetRelogio||0) + 700;
+          smParar(false); SALA._metro.t0 = smQuandoParaAudio(quando);
+          SALA._metro.tocando=true; smAgendarBloco();
+          salaEnviar({tipo:'metroPlay', quando:quando, bpm:SALA._metro.bpm});
         }
       }
       SALA.aplicando=false; return;
@@ -3386,60 +3380,54 @@
   }
 
   function smAgendarBloco(){
-    // agenda ~12s de clicks na GRADE ABSOLUTA do relogio comum, reagendando.
+    // agenda ~30s de clicks a partir de t0, no RELOGIO DE AUDIO (estavel).
+    // Nao le o offsetRelogio da rede aqui: uma vez definido o t0 no play, o click
+    // corre constante como um metronomo de DAW, sem oscilar (sem cavalgar).
     if(!SALA._metro.tocando) return;
     const dest = smGarantirCadeia();
     const bpm = SALA._metro.bpm;
-    const beatMs = 60000/bpm;
-    const foneMs = (SALA.foneCalib||0);
-    const agoraComum = Date.now() + (SALA.offsetRelogio||0);   // "agora" no relogio do host
-    // indice do primeiro beat que ainda esta no FUTURO proximo (com folga de 30ms):
-    let k = Math.ceil((agoraComum + 30 - SALA._metro.epoca)/beatMs);
-    if(k<0) k=0;
-    // se ja agendamos ate certo indice, continua do proximo (evita duplicar):
-    if(SALA._metro._ultimoK!==undefined && k<=SALA._metro._ultimoK) k = SALA._metro._ultimoK + 1;
-    const fimComum = agoraComum + 12000;   // agenda os proximos 12s
-    let agendados = 0;
-    for(let idx=k; ; idx++){
-      const beatComum = SALA._metro.epoca + idx*beatMs;
-      if(beatComum >= fimComum) break;
-      const falta = (beatComum - agoraComum)/1000;                 // s ate esse beat
-      const tAudio = state.ctx.currentTime + falta - foneMs/1000;  // instante no audio local
-      if(tAudio <= state.ctx.currentTime + 0.005) continue;        // ja passou: pula com seguranca
-      SALA._metro.nodes.push(clickBlip(state.ctx, dest, tAudio, false, false, false));
-      SALA._metro._ultimoK = idx;
-      agendados++;
+    const beat = 60/bpm;
+    const agora = state.ctx.currentTime;
+    let n = Math.ceil((agora - SALA._metro.t0)/beat);
+    if(n<0) n=0;
+    const fim = agora + 30;
+    for(let t = SALA._metro.t0 + n*beat; t < fim; t += beat, n++){
+      if(t < agora - 0.05) continue;
+      // todos os clicks iguais (sem acento), como combinado.
+      SALA._metro.nodes.push(clickBlip(state.ctx, dest, t, false, false, false));
     }
-    // limpa nodes antigos da lista (evita crescer sem limite)
-    if(SALA._metro.nodes.length > 400) SALA._metro.nodes = SALA._metro.nodes.slice(-200);
-    SALA._metro.timer = setTimeout(smAgendarBloco, 8000);   // reagenda com folga
+    // limpa nodes antigos (evita crescer sem limite)
+    if(SALA._metro.nodes.length > 600) SALA._metro.nodes = SALA._metro.nodes.slice(-300);
+    SALA._metro.timer = setTimeout(smAgendarBloco, 25000);
   }
-
+  // Converte um instante combinado (em Date.now, relogio comum da sala) para o
+  // relogio de AUDIO local. Chamada UMA VEZ no play: depois o click corre sozinho
+  // no relogio de audio (estavel), sem reler o offset da rede (que oscila).
+  function smQuandoParaAudio(quando){
+    const foneMs = (SALA.foneCalib||0)/1000;
+    const agoraComum = Date.now() + (SALA.offsetRelogio||0);
+    const esperar = (quando - agoraComum)/1000;
+    return state.ctx.currentTime + esperar - foneMs;
+  }
   function smIniciar(sincronizar){
     ensureCtx();
     // iPhone: o toque no botao "Iniciar click" e um gesto valido; reacorda o audio.
     try{ if(state.ctx.state==='suspended') state.ctx.resume(); }catch(e){}
     try{ destravarAudio(); }catch(e){}
     SALA._metro.bpm = parseInt($('smBpm').value,10)||100;
+    SALA._metro.tocando = true;
+    const foneMs = (SALA.foneCalib||0)/1000;
     if(sincronizar!==false && SALA.ligada && !SALA.aplicando){
-      // MALHA: quem aciona define a epoca no PROPRIO relogio e envia a todos.
-      // Envia tambem o "tEmissor" (o Date.now do emissor no momento), para cada
-      // receptor converter para o seu relogio usando o offset que mediu.
-      const agoraLocal = Date.now();
-      const epocaLocal = agoraLocal + 1000;   // 1s de folga para todos receberem
-      SALA._metro.epoca = epocaLocal;          // no meu relogio, epoca e assim
-      SALA._metro._ultimoK = undefined;
-      SALA._metro.tocando = true;
-      smAgendarBloco();
-      // envia a epoca EM RELACAO ao emissor: cada um ajusta pelo seu offset.
-      salaEnviar({tipo:'metroPlay', epocaEmissor:epocaLocal, tEmissor:agoraLocal, bpm:SALA._metro.bpm});
+      // define UM instante combinado e usa a MESMA conversao que o convidado usara.
+      // t0 fica FIXO no relogio de audio; o click corre a partir dele, sem oscilar.
+      const quando = Date.now() + (SALA.offsetRelogio||0) + 700;
+      SALA._metro.t0 = smQuandoParaAudio(quando);
+      salaEnviar({tipo:'metroPlay', quando:quando, bpm:SALA._metro.bpm});
     } else {
-      // sozinho (fora de sala): epoca no proprio relogio
-      SALA._metro.epoca = Date.now() + 120;
-      SALA._metro._ultimoK = undefined;
-      SALA._metro.tocando = true;
-      smAgendarBloco();
+      // sozinho: comeca daqui a pouco
+      SALA._metro.t0 = state.ctx.currentTime + 0.12 - foneMs;
     }
+    smAgendarBloco();
     atualizarBotaoSmPlay();
   }
   function smParar(sincronizar){
@@ -3447,7 +3435,6 @@
     if(SALA._metro.timer){ clearTimeout(SALA._metro.timer); SALA._metro.timer=null; }
     try{ SALA._metro.nodes.forEach(n=>{ try{ n.stop&&n.stop(); }catch(e){} }); }catch(e){}
     SALA._metro.nodes=[];
-    SALA._metro._ultimoK=undefined;
     atualizarBotaoSmPlay();
     if(sincronizar!==false && SALA.ligada && !SALA.aplicando){ salaEnviar({tipo:'metroStop'}); }
   }
@@ -3482,14 +3469,14 @@
     function smBpmMudou(){
       SALA._metro.bpm=parseInt(bpm.value,10)||100;
       if(SALA.ligada && !SALA.aplicando){
-        // avisa a sala. O host re-emite a epoca (todos re-sincronizam juntos).
+        // avisa a sala. O host re-emite o instante (todos re-sincronizam juntos).
         salaEnviar({tipo:'metroBpm', bpm:SALA._metro.bpm});
         // se EU sou o host e estou tocando, re-emito ja (o handler do host cuida).
         if(SALA.host && SALA._metro.tocando){
-          const epoca = Date.now() + 1000;
-          SALA._metro.epoca=epoca; SALA._metro._ultimoK=undefined;
-          smParar(false); SALA._metro.tocando=true; smAgendarBloco();
-          salaEnviar({tipo:'metroPlay', epoca:epoca, bpm:SALA._metro.bpm});
+          const quando = Date.now() + (SALA.offsetRelogio||0) + 700;
+          smParar(false); SALA._metro.t0 = smQuandoParaAudio(quando);
+          SALA._metro.tocando=true; smAgendarBloco();
+          salaEnviar({tipo:'metroPlay', quando:quando, bpm:SALA._metro.bpm});
         }
       } else if(SALA._metro.tocando){
         // fora de sala: reinicia local para pegar o novo andamento
