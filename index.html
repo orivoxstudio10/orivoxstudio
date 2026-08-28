@@ -588,7 +588,7 @@
   <p class="empty-note" id="emptyNote">Dica: se sua música ainda está num arquivo único, separe as pistas gratuitamente com o caderno Orivox Separador (<a href="https://colab.research.google.com/" target="_blank" rel="noopener">Google Colab</a>) ou com o programa <a href="https://ultimatevocalremover.com/" target="_blank" rel="noopener">UVR</a>, e importe os resultados aqui.</p>
 
   <footer>
-    <span class="fm">Orivox</span> · v1.5 · Desenvolvido por Raphael Silveira</footer>
+    <span class="fm">Orivox</span> · v1.7 · Desenvolvido por Raphael Silveira</footer>
 </div>
 
 <div class="sobre-overlay" id="boasVindasOverlay" role="dialog" aria-modal="true" aria-labelledby="boasVindasTitulo">
@@ -2298,7 +2298,7 @@
     if(typeof SALA!=='undefined' && SALA.ligada && !SALA.aplicando) salaEnviar({tipo:'stop'});
   });
 
-  function startPlayback(skipCount, countSecForcado){
+  function startPlayback(skipCount, countSecForcado, quandoSala){
     ensureCtx();
     if(state.offset>=state.duration) state.offset=0;
     // countSecForcado: quando a sala manda um tempo de pre-contagem comum, todos
@@ -2321,7 +2321,19 @@
     // Compensacao do fone (calibracao): adianta o audio pelo atraso do Bluetooth
     // deste aparelho, para o som chegar no ouvido no tempo certo.
     const foneMs = (typeof SALA!=='undefined' && SALA.foneCalib)? SALA.foneCalib : 0;
-    const clock0 = state.ctx.currentTime + 0.06 + countSec - (foneMs/1000);   // instante em que a 1ª batida soa
+    // instante em que a 1a batida soa, no relogio de AUDIO.
+    // Se a sala mandou um instante comum (quandoSala), converte-o para o relogio de
+    // audio pelo MESMO metodo do click (preciso), em vez de usar um +0.06 solto
+    // apos um setTimeout impreciso. E o que faz a musica fincar igual ao click.
+    let baseAudio;
+    if(quandoSala!==undefined && typeof SALA!=='undefined'){
+      const agoraComum = Date.now() + (SALA.offsetRelogio||0);
+      baseAudio = state.ctx.currentTime + (quandoSala - agoraComum)/1000;
+      if(baseAudio < state.ctx.currentTime + 0.02) baseAudio = state.ctx.currentTime + 0.02;
+    } else {
+      baseAudio = state.ctx.currentTime + 0.06;
+    }
+    const clock0 = baseAudio + countSec - (foneMs/1000);   // instante em que a 1a batida soa
     // ALINHAMENTO DA ENTRADA: quando a música não começa "na cara" (tem cabeça,
     // anacruse ou dedilhado antes do tempo 1), ela deve COMEÇAR A SOAR durante os
     // últimos tempos da contagem, para que seu 1º tempo real caia exatamente onde
@@ -2736,7 +2748,12 @@
   function relogioFincado(){
     if(typeof SALA==='undefined') return true;
     if(SALA.host) return true;
-    return (SALA._nAmostras||0) >= 5;
+    // precisa de algumas amostras E que elas concordem (spread <= 25ms).
+    // Assim o relogio so e "pronto" quando REALMENTE convergiu, nao so porque
+    // ja mediu varias vezes (o que causava o "toca torto, da play de novo").
+    const temAmostras = (SALA._amostras && SALA._amostras.length >= 4);
+    const convergiu = (SALA._spread!==undefined && SALA._spread <= 25);
+    return temAmostras && convergiu;
   }
 
   // Dispara o play garantindo que o relogio ja fincou. Se ainda nao fincou, manda
@@ -2749,28 +2766,32 @@
       const temCont = (mMode.value!=='off' && state.offset<0.01);
       const countSecComum = temCont ? metroCountSec() : 0;
       salaEnviar({tipo:'play', quando:quando, pos:state.offset, countSec:countSecComum});
-      const esperar = Math.max(0, quando - (Date.now()+(SALA.offsetRelogio||0)));
-      setTimeout(()=>{ if(!state.playing) startPlayback(); }, esperar);
+      // o EMISSOR tambem ancora no mesmo 'quando' (converte para o relogio de audio),
+      // igual aos outros. Dispara ~120ms antes; o WebAudio finca no instante exato.
+      const esperar = Math.max(0, quando - (Date.now()+(SALA.offsetRelogio||0)) - 120);
+      const cs = temCont ? countSecComum : undefined;
+      setTimeout(()=>{ if(!state.playing) startPlayback(false, cs, quando); }, esperar);
     };
     if(relogioFincado()){ tocar(); return; }
-    // relogio ainda medindo: acelera com uma rajada de pings e espera fincar.
+    // relogio ainda nao convergiu: pinga sem parar e espera CONVERGIR (ate ~5s).
+    // A rajada continua ativa durante TODA a espera (alimenta a convergencia).
     salaLog('aguardando o relogio fincar antes de tocar...');
     salaMsg('sincronizando a sala...', true);
-    let n=0;
     const rajada=setInterval(()=>{
-      if(n++>=15){ clearInterval(rajada); return; }
       SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){} });
     }, 120);
-    // verifica a cada 150ms se ja fincou; toca assim que fincar (ou no limite de ~3s).
     let esperas=0;
     const checa=setInterval(()=>{
       esperas++;
-      if(relogioFincado() || esperas>=20){
+      const pronto = relogioFincado();
+      if(pronto || esperas>=40){   // ate ~5s (40 x 120ms)
         clearInterval(checa); clearInterval(rajada);
+        if(!pronto) salaLog('relogio nao convergiu 100%, tocando assim mesmo');
+        else salaLog('relogio fincado, tocando sincronizado');
         salaMsg('na sala', true);
         tocar();
       }
-    }, 150);
+    }, 120);
   }
 
   function salaEnviar(msg){
@@ -2947,6 +2968,9 @@
       top.sort((a,b)=>a.offset-b.offset);
       const novoOffset = top[Math.floor(top.length/2)].offset;
       SALA.melhorRtt = ord[0].rtt;
+      // QUALIDADE do relogio: o quanto as melhores amostras concordam (spread).
+      // spread pequeno = relogio convergiu (fincado); grande = ainda oscilando.
+      SALA._spread = (top.length>=2)? (top[top.length-1].offset - top[0].offset) : 999;
       // suavizacao: move 60% em direcao ao novo valor (evita solavancos)
       if(SALA.offsetRelogio===0 || SALA._amostras.length<4) SALA.offsetRelogio = novoOffset;
       else SALA.offsetRelogio = SALA.offsetRelogio*0.4 + novoOffset*0.6;
@@ -2998,15 +3022,18 @@
     if(msg.tipo==='pedeArquivos'){ if(SALA.host) enviarPistasPara(origem); return; }
     if(msg.tipo==='estado'){ aplicarEstado(msg); return; }
     if(msg.tipo==='play'){
-      // sincronismo por relogio: comeca quando o relogio local alcanca "quando"
+      // sincronismo por relogio: o instante exato vem do agendamento de AUDIO
+      // (preciso), nao do setTimeout. Disparamos um pouco antes e o WebAudio finca.
       const agora = Date.now() + SALA.offsetRelogio;
-      const esperar = Math.max(0, msg.quando - agora);
+      const esperar = Math.max(0, msg.quando - agora - 120);  // acorda ~120ms antes
       SALA.aplicando=true;
       state.offset = msg.pos||0;
-      // usa o MESMO tempo de pre-contagem que o anfitriao (msg.countSec), para a
-      // musica entrar no mesmo instante em todos, mesmo que a config local diste.
       const cs = (msg.countSec!==undefined)? msg.countSec : undefined;
-      setTimeout(()=>{ if(!state.playing && state.tracks.length){ startPlayback(false, cs); } SALA.aplicando=false; }, esperar);
+      const quandoSala = msg.quando;   // instante comum: startPlayback ancora nele
+      setTimeout(()=>{
+        if(!state.playing && state.tracks.length){ startPlayback(false, cs, quandoSala); }
+        SALA.aplicando=false;
+      }, esperar);
       return;
     }
     if(msg.tipo==='pausa'){
