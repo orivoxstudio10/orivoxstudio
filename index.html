@@ -588,7 +588,7 @@
   <p class="empty-note" id="emptyNote">Dica: se sua música ainda está num arquivo único, separe as pistas gratuitamente com o caderno Orivox Separador (<a href="https://colab.research.google.com/" target="_blank" rel="noopener">Google Colab</a>) ou com o programa <a href="https://ultimatevocalremover.com/" target="_blank" rel="noopener">UVR</a>, e importe os resultados aqui.</p>
 
   <footer>
-    <span class="fm">Orivox</span> · v1.4 · Desenvolvido por Raphael Silveira</footer>
+    <span class="fm">Orivox</span> · v1.5 · Desenvolvido por Raphael Silveira</footer>
 </div>
 
 <div class="sobre-overlay" id="boasVindasOverlay" role="dialog" aria-modal="true" aria-labelledby="boasVindasTitulo">
@@ -2284,21 +2284,10 @@
       // Sala ligada: agenda o play num instante futuro comum a todos, para o
       // audio cair junto em cada aparelho (sincronismo por relogio).
       if(typeof SALA!=='undefined' && SALA.ligada && !SALA.aplicando){
-        // folga maior (700ms): 300ms era apertado e o outro aparelho perdia o
-        // instante, comecando no tempo seguinte. 700ms da tempo do comando chegar.
-        // Se o relogio ainda nao foi medido (play muito rapido apos entrar),
-        // usa folga ainda maior para compensar a incerteza do offset.
-        const relogioPronto = (SALA.host || SALA.melhorRtt!==undefined);
-        const folga = relogioPronto? 700 : 1200;
-        const quando = Date.now() + SALA.offsetRelogio + folga;
-        if(!relogioPronto) salaLog('relogio ainda medindo; usando folga maior');
-        // calcula a pre-contagem DESTE aparelho e manda para todos usarem a mesma,
-        // para a musica entrar no mesmo instante em todos (com ou sem contagem local).
-        const temCont = (mMode.value!=='off' && state.offset<0.01);
-        const countSecComum = temCont ? metroCountSec() : 0;
-        salaEnviar({tipo:'play', quando:quando, pos:state.offset, countSec:countSecComum});
-        const esperar = Math.max(0, quando - (Date.now()+SALA.offsetRelogio));
-        setTimeout(()=>{ if(!state.playing) startPlayback(); }, esperar);
+        // ESPERA O RELOGIO FINCAR: em vez de tocar torto e obrigar o usuario a dar
+        // stop/play varias vezes ate o relogio estabilizar, o proprio play espera
+        // o relogio ficar pronto (sozinho) e SO entao dispara, ja sincronizado.
+        dispararPlaySincronizado();
       } else {
         startPlayback();
       }
@@ -2673,7 +2662,7 @@
   };
   const SALA = {
     peer:null, host:false, conns:[], id:null, meuId:null,
-    ligada:false, aplicando:false, offsetRelogio:0, melhorRtt:undefined, ancora:null,
+    ligada:false, aplicando:false, offsetRelogio:0, melhorRtt:undefined, ancora:null, _nAmostras:0,
     // MALHA: todos conectam com todos. peersConhecidos = ids de todos na sala;
     // assim, se qualquer um (ate o anfitriao) sair, os demais continuam ligados.
     peersConhecidos: {}   // { peerId: true }
@@ -2740,6 +2729,48 @@
   function salaPista(t, acao, valor){
     if(typeof SALA==='undefined' || !SALA.ligada || SALA.aplicando) return;
     salaEnviar({tipo:'pista', nome:t.name, acao:acao, valor:valor});
+  }
+
+  // O relogio esta "fincado" quando ja temos amostras suficientes para um offset
+  // estavel (nao basta 1 medicao). O host e sua propria referencia (sempre pronto).
+  function relogioFincado(){
+    if(typeof SALA==='undefined') return true;
+    if(SALA.host) return true;
+    return (SALA._nAmostras||0) >= 5;
+  }
+
+  // Dispara o play garantindo que o relogio ja fincou. Se ainda nao fincou, manda
+  // uma rajada de pings e ESPERA (ate ~3s) o relogio estabilizar; so entao toca.
+  // Assim o usuario nao precisa mais dar stop/play varias vezes para sincronizar.
+  function dispararPlaySincronizado(){
+    const tocar = ()=>{
+      const folga = 700;
+      const quando = Date.now() + (SALA.offsetRelogio||0) + folga;
+      const temCont = (mMode.value!=='off' && state.offset<0.01);
+      const countSecComum = temCont ? metroCountSec() : 0;
+      salaEnviar({tipo:'play', quando:quando, pos:state.offset, countSec:countSecComum});
+      const esperar = Math.max(0, quando - (Date.now()+(SALA.offsetRelogio||0)));
+      setTimeout(()=>{ if(!state.playing) startPlayback(); }, esperar);
+    };
+    if(relogioFincado()){ tocar(); return; }
+    // relogio ainda medindo: acelera com uma rajada de pings e espera fincar.
+    salaLog('aguardando o relogio fincar antes de tocar...');
+    salaMsg('sincronizando a sala...', true);
+    let n=0;
+    const rajada=setInterval(()=>{
+      if(n++>=15){ clearInterval(rajada); return; }
+      SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){} });
+    }, 120);
+    // verifica a cada 150ms se ja fincou; toca assim que fincar (ou no limite de ~3s).
+    let esperas=0;
+    const checa=setInterval(()=>{
+      esperas++;
+      if(relogioFincado() || esperas>=20){
+        clearInterval(checa); clearInterval(rajada);
+        salaMsg('na sala', true);
+        tocar();
+      }
+    }, 150);
   }
 
   function salaEnviar(msg){
@@ -2895,6 +2926,7 @@
     }
 
     if(msg.tipo==='pong'){
+      try{ if(SALA._marcarVivo) SALA._marcarVivo(); }catch(e){}   // sala esta viva
       // Ancora do relogio: so o pong da ancora define o offset comum. Se a ancora
       // ainda nao existe, o host e a ancora; se sou host, eu sou a ancora (offset 0).
       if(!SALA.ancora && !SALA.host){ SALA.ancora = SALA._salaAlvo || (msg.de); }
@@ -2906,6 +2938,7 @@
       SALA._amostras = SALA._amostras || [];
       SALA._amostras.push({rtt, offset:offsetAmostra});
       if(SALA._amostras.length>20) SALA._amostras.shift();
+      SALA._nAmostras = (SALA._nAmostras||0) + 1;
       // Usa as amostras de MENOR rtt (as menos contaminadas): pega o terco melhor
       // e tira a MEDIANA dos offsets. Isso e mais estavel que so o menor de todos,
       // e se re-adapta quando a rede melhora (janela deslizante).
@@ -2951,14 +2984,10 @@
     if(msg.tipo==='metroBpm'){
       SALA.aplicando=true;
       $('smBpm').value=msg.bpm; SALA._metro.bpm=msg.bpm;
-      // se estava tocando, o anfitriao re-emite a epoca para todos re-sincronizarem
-      if(SALA._metro.tocando){
-        if(SALA.host){
-          const quando = Date.now() + (SALA.offsetRelogio||0) + 700;
-          smParar(false); SALA._metro.t0 = smQuandoParaAudio(quando);
-          SALA._metro.tocando=true; smAgendarBloco();
-          salaEnviar({tipo:'metroPlay', quando:quando, bpm:SALA._metro.bpm});
-        }
+      // AO VIVO: se ha um instante combinado e estou tocando, reancora no mesmo
+      // ponto e segue no novo BPM, sem parar. Todos aplicam igual (sem depender do host).
+      if(SALA._metro.tocando && msg.quando!==undefined && typeof window.__aplicarBpmAoVivo==='function'){
+        window.__aplicarBpmAoVivo(msg.bpm, msg.quando);
       }
       SALA.aplicando=false; return;
     }
@@ -3389,17 +3418,39 @@
     const bpm = SALA._metro.bpm;
     const beat = 60/bpm;
     const agora = state.ctx.currentTime;
-    let n = Math.ceil((agora - SALA._metro.t0)/beat);
+    // comeca do maior entre "agora" e o ponto ate onde ja agendamos (nao repete).
+    let inicio = agora;
+    if(SALA._metro._agendadoAte && SALA._metro._agendadoAte>inicio) inicio = SALA._metro._agendadoAte;
+    let n = Math.ceil((inicio - SALA._metro.t0)/beat);
     if(n<0) n=0;
     const fim = agora + 30;
     for(let t = SALA._metro.t0 + n*beat; t < fim; t += beat, n++){
       if(t < agora - 0.05) continue;
-      // todos os clicks iguais (sem acento), como combinado.
-      SALA._metro.nodes.push(clickBlip(state.ctx, dest, t, false, false, false));
+      // guarda o osc E o tempo, para poder cancelar os futuros ao mudar o BPM.
+      SALA._metro.nodes.push({ osc: clickBlip(state.ctx, dest, t, false, false, false), t: t });
     }
+    SALA._metro._agendadoAte = fim;
     // limpa nodes antigos (evita crescer sem limite)
     if(SALA._metro.nodes.length > 600) SALA._metro.nodes = SALA._metro.nodes.slice(-300);
     SALA._metro.timer = setTimeout(smAgendarBloco, 25000);
+  }
+  // Para (cancela) os clicks agendados que ainda NAO soaram a partir de 'apartirDe'
+  // (no relogio de audio). Os que ja vao soar antes disso ficam. Usado ao mudar BPM.
+  function smLimparClicksFuturos(apartirDe){
+    try{
+      const restantes=[];
+      SALA._metro.nodes.forEach(item=>{
+        const t = (item && item.t!==undefined)? item.t : null;
+        const osc = (item && item.osc)? item.osc : item;
+        if(t!==null && t>=apartirDe){
+          try{ osc.stop(apartirDe); }catch(e){}   // cancela o que ainda nao soou
+        } else {
+          restantes.push(item);
+        }
+      });
+      SALA._metro.nodes = restantes;
+      SALA._metro._agendadoAte = apartirDe;   // reabre o agendamento a partir daqui
+    }catch(e){}
   }
   // Converte um instante combinado (em Date.now, relogio comum da sala) para o
   // relogio de AUDIO local. Chamada UMA VEZ no play: depois o click corre sozinho
@@ -3417,6 +3468,7 @@
     try{ destravarAudio(); }catch(e){}
     SALA._metro.bpm = parseInt($('smBpm').value,10)||100;
     SALA._metro.tocando = true;
+    SALA._metro._agendadoAte = 0;
     const foneMs = (SALA.foneCalib||0)/1000;
     if(sincronizar!==false && SALA.ligada && !SALA.aplicando){
       // define UM instante combinado e usa a MESMA conversao que o convidado usara.
@@ -3434,8 +3486,9 @@
   function smParar(sincronizar){
     SALA._metro.tocando=false;
     if(SALA._metro.timer){ clearTimeout(SALA._metro.timer); SALA._metro.timer=null; }
-    try{ SALA._metro.nodes.forEach(n=>{ try{ n.stop&&n.stop(); }catch(e){} }); }catch(e){}
+    try{ SALA._metro.nodes.forEach(n=>{ try{ const o=(n&&n.osc)?n.osc:n; o.stop&&o.stop(); }catch(e){} }); }catch(e){}
     SALA._metro.nodes=[];
+    SALA._metro._agendadoAte=0;
     atualizarBotaoSmPlay();
     if(sincronizar!==false && SALA.ligada && !SALA.aplicando){ salaEnviar({tipo:'metroStop'}); }
   }
@@ -3468,23 +3521,38 @@
       if(panLbl) panLbl.textContent='Centro';
     });
     function smBpmMudou(){
-      SALA._metro.bpm=parseInt(bpm.value,10)||100;
+      const novo=parseInt(bpm.value,10)||100;
+      SALA._metro.bpm=novo;
       if(SALA.ligada && !SALA.aplicando){
-        // avisa a sala. O host re-emite o instante (todos re-sincronizam juntos).
-        salaEnviar({tipo:'metroBpm', bpm:SALA._metro.bpm});
-        // se EU sou o host e estou tocando, re-emito ja (o handler do host cuida).
-        if(SALA.host && SALA._metro.tocando){
-          const quando = Date.now() + (SALA.offsetRelogio||0) + 700;
-          smParar(false); SALA._metro.t0 = smQuandoParaAudio(quando);
-          SALA._metro.tocando=true; smAgendarBloco();
-          salaEnviar({tipo:'metroPlay', quando:quando, bpm:SALA._metro.bpm});
+        if(SALA._metro.tocando){
+          // AO VIVO: define um instante combinado a partir do qual o novo BPM vale,
+          // reancora o click nesse ponto e segue SEM parar. Avisa todos igual.
+          const quando = Date.now() + (SALA.offsetRelogio||0) + 400;
+          aplicarBpmAoVivo(novo, quando);
+          salaEnviar({tipo:'metroBpm', bpm:novo, quando:quando});
+        } else {
+          // parado: so propaga o numero (todos ajustam o campo)
+          salaEnviar({tipo:'metroBpm', bpm:novo});
         }
       } else if(SALA._metro.tocando){
-        // fora de sala: reinicia local para pegar o novo andamento
-        smParar(false); smIniciar(false);
+        // fora de sala: muda ao vivo local
+        aplicarBpmAoVivo(novo, state.ctx.currentTime*1000);
       }
     }
+    // Reancora o click no 'quando' combinado e passa a bater no novo BPM, sem parar.
+    function aplicarBpmAoVivo(novo, quando){
+      try{
+        if(!SALA._metro.tocando){ SALA._metro.bpm=novo; return; }
+        const t0novo = smQuandoParaAudio(quando);   // instante no relogio de audio
+        // limpa apenas os clicks ainda NAO tocados a partir de t0novo (mantem os ja soantes)
+        smLimparClicksFuturos(t0novo);
+        SALA._metro.bpm=novo;
+        SALA._metro.t0=t0novo;
+        smAgendarBloco();
+      }catch(e){}
+    }
     window.__smBpmMudou = smBpmMudou;
+    window.__aplicarBpmAoVivo = aplicarBpmAoVivo;
   })();
 
   // ---- Calibracao de fone (Frente 4) ----
@@ -3519,8 +3587,12 @@
       rodando=true;
       btn.textContent='Travar aqui (calibrando...)';
       btn.classList.add('mute-on');
+      // se o valor atual ja esta no teto (ou quase), recomeca do zero, para
+      // poder calibrar de novo quantas vezes quiser. Senao, continua de onde esta.
+      let base=parseInt(num.value,10)||0;
+      if(base>=MAX) base=0;
+      aplica(base);
       const inicio=performance.now();
-      const base=parseInt(num.value,10)||0;
       const DUR=7000;   // ~7s para varrer de 0 a 300 (ritmo confortavel)
       function passo(){
         if(!rodando) return;
@@ -3661,30 +3733,59 @@
   // ---- iPhone/Safari suspende abas em segundo plano. Ao VOLTAR para a aba,
   // reacorda o audio e re-sincroniza com a sala (pede o estado atual). ----
   (function reativarAoVoltar(){
+    let saiuEm = 0;               // quando entrou em 2o plano (para medir o tempo fora)
+    let ultimoPong = Date.now();  // ultima vez que ouvimos QUALQUER resposta
+
+    // marca o instante de qualquer pong recebido (a sala esta viva).
+    if(typeof SALA!=='undefined'){ SALA._marcarVivo = ()=>{ ultimoPong = Date.now(); }; }
+
     function reafinar(){
       try{ if(state.ctx && state.ctx.state==='suspended') state.ctx.resume(); }catch(e){}
       try{
-        if(typeof SALA!=='undefined' && SALA.ligada && SALA.conns && SALA.conns.length){
-          // rajada de pings para reafinar o relogio JA (o timer fica lento em 2o
-          // plano e o relogio desatualiza; isto recrava ao voltar).
-          let n=0;
-          const rajada=setInterval(()=>{
-            if(n++>=8){ clearInterval(rajada); return; }
-            SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){} });
-          }, 150);
-          // pede o estado atual para re-espelhar (BPM, modo, mutes, posicao...).
-          SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'pedeEstado'})); }catch(e){} });
-          salaLog('voltou/ativou: reafinando relogio e re-sincronizando...');
-          // se o peer perdeu o servidor enquanto minimizado, reconecta.
-          if(SALA.peer && SALA.peer.disconnected && !SALA._saiuDeProposito){ tentarReconectar(); }
+        if(typeof SALA==='undefined' || !SALA.ligada || !SALA.conns || !SALA.conns.length) return;
+
+        const foraMs = saiuEm ? (Date.now()-saiuEm) : 0;
+        salaLog('voltou (fora '+Math.round(foraMs/1000)+'s): checando a sala...');
+
+        // 1) Se o peer perdeu o servidor de sinalizacao, reconecta JA.
+        if(SALA.peer && SALA.peer.disconnected && !SALA._saiuDeProposito){
+          tentarReconectar();
         }
+
+        // 2) Reafina o relogio com uma rajada de pings, e pede o estado atual.
+        let n=0;
+        const rajada=setInterval(()=>{
+          if(n++>=8){ clearInterval(rajada); return; }
+          SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){} });
+        }, 120);
+        SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'pedeEstado'})); }catch(e){} });
+
+        // 3) PROVA DE VIDA: manda um ping agora e ve se ALGUEM responde em 1,2s.
+        //    Se ninguem responder, as conexoes morreram no 2o plano: reconecta JA
+        //    (nao fica esperando indefinidamente = fim da demora).
+        const antes = ultimoPong;
+        SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){} });
+        setTimeout(()=>{
+          const ouviu = (ultimoPong > antes);
+          if(!ouviu && !SALA._saiuDeProposito){
+            salaLog('sala nao respondeu: reconectando JA...');
+            // forca a reconexao recriando o peer se preciso.
+            if(SALA.peer && !SALA.peer.destroyed){ try{ SALA.peer.disconnect(); }catch(e){} }
+            tentarReconectar();
+          } else if(ouviu){
+            salaLog('sala respondeu: sincronizada.');
+          }
+        }, 1200);
+
+        saiuEm = 0;
       }catch(e){}
     }
     document.addEventListener('visibilitychange', ()=>{
-      if(document.visibilityState==='visible') reafinar();
+      if(document.visibilityState==='hidden'){ saiuEm = Date.now(); }
+      else if(document.visibilityState==='visible'){ reafinar(); }
     });
-    // tambem reafina ao voltar o foco (cobre casos onde visibilitychange nao dispara)
     window.addEventListener('focus', reafinar);
+    window.addEventListener('pageshow', reafinar);   // volta do cache do navegador
   })();
 
 })();
