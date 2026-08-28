@@ -42,6 +42,10 @@
   .sala-sub{display:block;color:var(--muted);font-size:12px;margin-top:2px}
   .sala-status{margin-left:auto;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:20px;padding:3px 10px;white-space:nowrap}
   .sala-status.on{color:var(--gold-soft);border-color:var(--gold);background:rgba(42,212,200,.08)}
+  .sala-status.medindo{color:#E0533A;border-color:#E0533A;background:rgba(224,83,58,.10)}
+  .sala-status.quase{color:#E89B3C;border-color:#E89B3C;background:rgba(232,155,60,.10)}
+  .sala-status.pronta{color:#2AD4C8;border-color:#2AD4C8;background:rgba(42,212,200,.12);box-shadow:0 0 10px 0 rgba(42,212,200,.35)}
+  .sala-status{transition:color .5s ease, border-color .5s ease, background .5s ease, box-shadow .5s ease}
   .sala-acoes{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
   .sala-conectada{margin-top:12px;display:flex;flex-direction:column;gap:10px}
   .sala-linha{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -585,10 +589,10 @@
     <div class="status" id="exportStatus" role="status"></div>
   </section>
 
-  <p class="empty-note" id="emptyNote">Dica: se sua música ainda está num arquivo único, separe as pistas gratuitamente com o caderno Orivox Separador (<a href="https://colab.research.google.com/" target="_blank" rel="noopener">Google Colab</a>) ou com o programa <a href="https://ultimatevocalremover.com/" target="_blank" rel="noopener">UVR</a>, e importe os resultados aqui.</p>
+  <p class="empty-note" id="emptyNote">Dica: se sua música ainda está num arquivo único, separe as pistas gratuitamente com o <a href="#" id="lnkBaixarCaderno" title="Baixa o caderno Orivox_Separador_de_Pistas.ipynb direto daqui">caderno Orivox Separador</a> (rode no <a href="https://colab.research.google.com/" target="_blank" rel="noopener">Google Colab</a>) ou com o programa <a href="https://ultimatevocalremover.com/" target="_blank" rel="noopener">UVR</a>, e importe os resultados aqui.</p>
 
   <footer>
-    <span class="fm">Orivox</span> · v1.7 · Desenvolvido por Raphael Silveira</footer>
+    <span class="fm">Orivox</span> · v1.9 · Desenvolvido por Raphael Silveira</footer>
 </div>
 
 <div class="sobre-overlay" id="boasVindasOverlay" role="dialog" aria-modal="true" aria-labelledby="boasVindasTitulo">
@@ -2700,6 +2704,13 @@
 
   function salaMsg(txt, on){
     const s=$('salaStatus'); if(!s) return;
+    // se a sala ja esta ligada, o indicador de prontidao (cor do relogio) manda no
+    // status; nao sobrescrevemos com 'na sala' etc. Deixa a prontidao falar.
+    if(typeof SALA!=='undefined' && SALA.ligada && (txt==='na sala' || txt==='sala aberta')){
+      atualizarProntidao();
+      return;
+    }
+    s.classList.remove('medindo','quase','pronta');
     s.textContent = txt;
     s.classList.toggle('on', !!on);
   }
@@ -2756,39 +2767,63 @@
     return temAmostras && convergiu;
   }
 
+  // ETAPA 1 - PRONTIDAO VISIVEL ("o verde"): traduz o estado do relogio em cor.
+  // vermelho = medindo | amarelo = quase | verde = fincado (pode tocar).
+  // O host e sempre a referencia (verde). Atualiza o indicador na tela.
+  function estadoProntidao(){
+    if(typeof SALA==='undefined' || !SALA.ligada) return 'medindo';
+    if(SALA.host) return 'pronta';
+    const nA = (SALA._amostras? SALA._amostras.length : 0);
+    const sp = (SALA._spread!==undefined? SALA._spread : 999);
+    if(nA>=4 && sp<=25) return 'pronta';
+    if(nA>=2 && sp<=70) return 'quase';
+    return 'medindo';
+  }
+  function atualizarProntidao(){
+    try{
+      const s=document.getElementById('salaStatus');
+      if(!s || !SALA || !SALA.ligada) return;
+      const est=estadoProntidao();
+      // a PROPRIA pilula de status muda de cor conforme a sala finca.
+      s.classList.remove('medindo','quase','pronta');
+      s.classList.add(est);
+      if(est==='pronta'){ s.textContent = 'sala pronta'; }
+      else if(est==='quase'){ s.textContent = 'quase pronta'; }
+      else { s.textContent = 'sincronizando'; }
+    }catch(e){}
+  }
+
   // Dispara o play garantindo que o relogio ja fincou. Se ainda nao fincou, manda
   // uma rajada de pings e ESPERA (ate ~3s) o relogio estabilizar; so entao toca.
   // Assim o usuario nao precisa mais dar stop/play varias vezes para sincronizar.
   function dispararPlaySincronizado(){
     const tocar = ()=>{
+      // com o relogio fincado na ENTRADA, a folga curta (700ms) ja basta.
       const folga = 700;
       const quando = Date.now() + (SALA.offsetRelogio||0) + folga;
       const temCont = (mMode.value!=='off' && state.offset<0.01);
       const countSecComum = temCont ? metroCountSec() : 0;
       salaEnviar({tipo:'play', quando:quando, pos:state.offset, countSec:countSecComum});
-      // o EMISSOR tambem ancora no mesmo 'quando' (converte para o relogio de audio),
-      // igual aos outros. Dispara ~120ms antes; o WebAudio finca no instante exato.
       const esperar = Math.max(0, quando - (Date.now()+(SALA.offsetRelogio||0)) - 120);
       const cs = temCont ? countSecComum : undefined;
       setTimeout(()=>{ if(!state.playing) startPlayback(false, cs, quando); }, esperar);
     };
+    // Com o "verde", o relogio ja fincou na entrada: normalmente toca direto.
     if(relogioFincado()){ tocar(); return; }
-    // relogio ainda nao convergiu: pinga sem parar e espera CONVERGIR (ate ~5s).
-    // A rajada continua ativa durante TODA a espera (alimenta a convergencia).
-    salaLog('aguardando o relogio fincar antes de tocar...');
-    salaMsg('sincronizando a sala...', true);
+    // Fallback raro (tocou muito rapido apos entrar): espera convergir, mostrando
+    // o indicador amarelo->verde, e toca assim que fincar (ate ~4s).
+    salaLog('ainda sincronizando; tocando assim que a sala ficar verde...');
     const rajada=setInterval(()=>{
       SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){} });
+      atualizarProntidao();
     }, 120);
     let esperas=0;
     const checa=setInterval(()=>{
       esperas++;
       const pronto = relogioFincado();
-      if(pronto || esperas>=40){   // ate ~5s (40 x 120ms)
+      if(pronto || esperas>=33){   // ate ~4s
         clearInterval(checa); clearInterval(rajada);
-        if(!pronto) salaLog('relogio nao convergiu 100%, tocando assim mesmo');
-        else salaLog('relogio fincado, tocando sincronizado');
-        salaMsg('na sala', true);
+        atualizarProntidao();
         tocar();
       }
     }, 120);
@@ -2971,6 +3006,7 @@
       // QUALIDADE do relogio: o quanto as melhores amostras concordam (spread).
       // spread pequeno = relogio convergiu (fincado); grande = ainda oscilando.
       SALA._spread = (top.length>=2)? (top[top.length-1].offset - top[0].offset) : 999;
+      atualizarProntidao();   // ETAPA 1: reflete o estado do relogio no indicador
       // suavizacao: move 60% em direcao ao novo valor (evita solavancos)
       if(SALA.offsetRelogio===0 || SALA._amostras.length<4) SALA.offsetRelogio = novoOffset;
       else SALA.offsetRelogio = SALA.offsetRelogio*0.4 + novoOffset*0.6;
@@ -3022,14 +3058,14 @@
     if(msg.tipo==='pedeArquivos'){ if(SALA.host) enviarPistasPara(origem); return; }
     if(msg.tipo==='estado'){ aplicarEstado(msg); return; }
     if(msg.tipo==='play'){
-      // sincronismo por relogio: o instante exato vem do agendamento de AUDIO
-      // (preciso), nao do setTimeout. Disparamos um pouco antes e o WebAudio finca.
-      const agora = Date.now() + SALA.offsetRelogio;
-      const esperar = Math.max(0, msg.quando - agora - 120);  // acorda ~120ms antes
       SALA.aplicando=true;
       state.offset = msg.pos||0;
       const cs = (msg.countSec!==undefined)? msg.countSec : undefined;
-      const quandoSala = msg.quando;   // instante comum: startPlayback ancora nele
+      const quandoSala = msg.quando;   // instante comum (no relogio da sala)
+      // com o relogio fincado na ENTRADA, o offset ja esta certo aqui: agenda o
+      // audio ancorado no instante comum (o WebAudio finca no ponto exato).
+      const agora = Date.now() + (SALA.offsetRelogio||0);
+      const esperar = Math.max(0, quandoSala - agora - 120);
       setTimeout(()=>{
         if(!state.playing && state.tracks.length){ startPlayback(false, cs, quandoSala); }
         SALA.aplicando=false;
@@ -3127,12 +3163,15 @@
       try{ conn.send(JSON.stringify({tipo:'pedeEstado'})); }catch(e){}
       // TODOS medem o relogio com este par (nao so convidado->host): na malha,
       // qualquer um pode ser a referencia de tempo de um comando.
-      // rajada inicial (12 pings em 200ms) para cravar JA; nao para por open=false.
+      // ETAPA 1 - FINCAR NA ENTRADA: rajada intensa (a cada 120ms por ~3s) para o
+      // relogio CONVERGIR ja na entrada, enquanto a pessoa baixa pistas/calibra.
+      // Assim, quando for tocar, a sala JA esta verde (fincada), sem esperar no play.
       let n=0;
       const rajada=setInterval(()=>{
-        if(n++>=12){ clearInterval(rajada); return; }
+        if(n++>=25){ clearInterval(rajada); return; }   // ~25 pings em 3s
         try{ conn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){}
-      }, 200);
+        atualizarProntidao();
+      }, 120);
       // ping continuo por-conexao (cada 2s), guardado por peer para nao vazar.
       conn._pingCont=setInterval(()=>{
         try{ conn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){}
@@ -3216,6 +3255,7 @@
       $('salaLink').value=url;
       $('salaAcoes').classList.add('hidden');
       $('salaConectada').classList.remove('hidden');
+      atualizarProntidao();
       atualizarPeers();
     });
     SALA.peer.on('connection', conn=>{ salaLog('alguem esta entrando...'); conectarEventos(conn); });
@@ -3257,6 +3297,7 @@
       $('salaLink').value=url;
       $('salaAcoes').classList.add('hidden');
       $('salaConectada').classList.remove('hidden');
+      atualizarProntidao();
     });
     // MALHA: o convidado tambem aceita conexoes de OUTROS convidados.
     SALA.peer.on('connection', conn=>{ salaLog('outro par conectando (malha)...'); conectarEventos(conn); });
@@ -3322,6 +3363,7 @@
     try{ SALA.conns.forEach(c=>{ try{ if(c._pingCont) clearInterval(c._pingCont); }catch(e){} c.close(); }); }catch(e){}
     try{ SALA.peer && SALA.peer.destroy(); }catch(e){}
     SALA.peer=null; SALA.conns=[]; SALA.ligada=false; SALA.host=false;
+    try{ const s=$('salaStatus'); if(s) s.classList.remove('medindo','quase','pronta'); }catch(e){}
     salaMsg('desligada', false);
     $('salaAcoes').classList.remove('hidden');
     $('salaConectada').classList.add('hidden');
@@ -3841,6 +3883,8 @@
   function ligar(){
     var b = document.getElementById('btnBaixarCaderno');
     if(b && !b._ligado){ b._ligado=true; b.addEventListener('click', baixarCaderno); }
+    var l = document.getElementById('lnkBaixarCaderno');
+    if(l && !l._ligado){ l._ligado=true; l.addEventListener('click', function(ev){ ev.preventDefault(); baixarCaderno(); }); }
   }
   if(document.readyState!=='loading') ligar();
   else document.addEventListener('DOMContentLoaded', ligar);
