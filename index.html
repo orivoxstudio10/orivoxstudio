@@ -45,8 +45,6 @@
   .sala-status.medindo{color:#E0533A;border-color:#E0533A;background:rgba(224,83,58,.10)}
   .sala-status.quase{color:#E89B3C;border-color:#E89B3C;background:rgba(232,155,60,.10)}
   .sala-status.pronta{color:#2AD4C8;border-color:#2AD4C8;background:rgba(42,212,200,.12);box-shadow:0 0 10px 0 rgba(42,212,200,.35)}
-  .sala-status.reconectando{color:#7FEDE3;border-color:#7FEDE3;background:rgba(127,237,227,.08);animation:reconPulse 1.4s ease-in-out infinite}
-  @keyframes reconPulse{0%,100%{opacity:.55}50%{opacity:1}}
   .sala-status{transition:color .5s ease, border-color .5s ease, background .5s ease, box-shadow .5s ease}
   .sala-acoes{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
   .sala-conectada{margin-top:12px;display:flex;flex-direction:column;gap:10px}
@@ -594,7 +592,7 @@
   <p class="empty-note" id="emptyNote">Dica: se sua música ainda está num arquivo único, separe as pistas gratuitamente com o <a href="#" id="lnkBaixarCaderno" title="Baixa o caderno Orivox_Separador_de_Pistas.ipynb direto daqui">caderno Orivox Separador</a> (rode no <a href="https://colab.research.google.com/" target="_blank" rel="noopener">Google Colab</a>) ou com o programa <a href="https://ultimatevocalremover.com/" target="_blank" rel="noopener">UVR</a>, e importe os resultados aqui.</p>
 
   <footer>
-    <span class="fm">Orivox</span> · v2.1 · Desenvolvido por Raphael Silveira</footer>
+    <span class="fm">Orivox</span> · v1.9 · Desenvolvido por Raphael Silveira</footer>
 </div>
 
 <div class="sobre-overlay" id="boasVindasOverlay" role="dialog" aria-modal="true" aria-labelledby="boasVindasTitulo">
@@ -685,27 +683,6 @@
     }
     if(state.ctx.state==='suspended') state.ctx.resume();
     return state.ctx;
-  }
-  // Garante o AudioContext REALMENTE rodando (running) antes de agendar audio.
-  // Sem isso, o 1o play pega um currentTime instavel (contexto frio) e desfinca -
-  // causa do "finca so na 2a/3a vez" e de "calibrar ajuda" (a calibragem acorda o ctx).
-  function ctxPronto(){
-    return new Promise((resolve)=>{
-      ensureCtx();
-      if(state.ctx.state==='running'){ resolve(); return; }
-      let tentativas=0;
-      const checa=()=>{
-        tentativas++;
-        try{ if(state.ctx.state==='suspended') state.ctx.resume(); }catch(e){}
-        if(state.ctx.state==='running' || tentativas>=30){ resolve(); }
-        else setTimeout(checa, 20);
-      };
-      checa();
-    });
-  }
-  // Mantem o contexto quente (evita esfriar em ociosidade/2o plano, que desfincava).
-  function aquecerCtx(){
-    try{ if(state.ctx && state.ctx.state==='suspended') state.ctx.resume(); }catch(e){}
   }
 
   /* ---------------- Importação ---------------- */
@@ -2798,73 +2775,16 @@
     if(SALA.host) return 'pronta';
     const nA = (SALA._amostras? SALA._amostras.length : 0);
     const sp = (SALA._spread!==undefined? SALA._spread : 999);
-    // FRESCOR: se a ultima medicao esta velha (download, troca de rede, 2o plano),
-    // o verde EXPIRA e cai - verde significa "fincado AGORA", nao "ha 2 minutos".
-    const idade = SALA._ultimaMedicao? (Date.now()-SALA._ultimaMedicao) : 99999;
-    if(idade > 6000) return 'medindo';
-    if(idade > 3500) return 'quase';
     if(nA>=4 && sp<=25) return 'pronta';
     if(nA>=2 && sp<=70) return 'quase';
     return 'medindo';
   }
-  // Estado da SALA INTEIRA: o PIOR entre o meu e o dos pares. So verde quando
-  // EU e TODOS estamos verdes (vigilancia coletiva - um evento em alguem reafina todos).
-  function estadoSala(){
-    const ordem = { medindo:0, quase:1, pronta:2 };
-    let pior = estadoProntidao();
-    const pares = SALA._prontDosPares || {};
-    const agora = Date.now();
-    Object.keys(pares).forEach(id=>{
-      const p = pares[id];
-      if(agora - p.quando > 5000) return;   // ignora estado velho (par sumiu)
-      if(ordem[p.est] < ordem[pior]) pior = p.est;
-    });
-    return pior;
-  }
-  // Re-mede o relogio do zero (apos download/troca de rede/2o plano) e avisa a tela.
-  function ressincronizarRelogio(motivo){
-    try{
-      if(typeof SALA==='undefined' || !SALA.ligada || SALA.host) return;
-      salaLog('re-sincronizando relogio ('+(motivo||'')+')');
-      SALA._amostras = []; SALA._spread = 999;
-      atualizarProntidao();
-      let n=0;
-      const rajada=setInterval(()=>{
-        if(n++>=20 || !SALA.ligada){ clearInterval(rajada); return; }
-        SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){} });
-        atualizarProntidao();
-      }, 120);
-    }catch(e){}
-  }
-  // VIGIA CONTINUO: a cada 500ms reavalia a sala e aquece o contexto. Se nao esta
-  // verde, pinga para refincar. Mantem o verde vivo e honesto o tempo todo.
-  function iniciarVigiaSala(){
-    if(SALA._vigia) return;
-    SALA._vigia = setInterval(()=>{
-      if(typeof SALA==='undefined' || !SALA.ligada){ clearInterval(SALA._vigia); SALA._vigia=null; return; }
-      aquecerCtx();
-      if(SALA.host){ atualizarProntidao(); return; }
-      const est = estadoProntidao();
-      atualizarProntidao();
-      if(est!=='pronta'){
-        SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){} });
-      }
-    }, 500);
-  }
-  function pararVigiaSala(){ if(SALA._vigia){ clearInterval(SALA._vigia); SALA._vigia=null; } }
   function atualizarProntidao(){
     try{
-      if(!SALA || !SALA.ligada) return;
-      const meu = estadoProntidao();
-      // transmite o MEU estado aos pares quando muda (para o verde ser coletivo).
-      if(meu !== SALA._meuProntAnt){
-        SALA._meuProntAnt = meu;
-        try{ if(!SALA.aplicando) salaEnviar({tipo:'prontidao', est:meu, de:SALA.meuId}); }catch(e){}
-      }
       const s=document.getElementById('salaStatus');
-      if(!s) return;
-      if(s.classList.contains('reconectando')) return;   // reconexao manda na tela
-      const est=estadoSala();   // estado da SALA INTEIRA (o pior de todos)
+      if(!s || !SALA || !SALA.ligada) return;
+      const est=estadoProntidao();
+      // a PROPRIA pilula de status muda de cor conforme a sala finca.
       s.classList.remove('medindo','quase','pronta');
       s.classList.add(est);
       if(est==='pronta'){ s.textContent = 'sala pronta'; }
@@ -2878,17 +2798,15 @@
   // Assim o usuario nao precisa mais dar stop/play varias vezes para sincronizar.
   function dispararPlaySincronizado(){
     const tocar = ()=>{
-      ctxPronto().then(()=>{
-        // folga curta (700ms) basta com o relogio fincado e o contexto quente.
-        const folga = 700;
-        const quando = Date.now() + (SALA.offsetRelogio||0) + folga;
-        const temCont = (mMode.value!=='off' && state.offset<0.01);
-        const countSecComum = temCont ? metroCountSec() : 0;
-        salaEnviar({tipo:'play', quando:quando, pos:state.offset, countSec:countSecComum});
-        const esperar = Math.max(0, quando - (Date.now()+(SALA.offsetRelogio||0)) - 120);
-        const cs = temCont ? countSecComum : undefined;
-        setTimeout(()=>{ if(!state.playing) startPlayback(false, cs, quando); }, esperar);
-      });
+      // com o relogio fincado na ENTRADA, a folga curta (700ms) ja basta.
+      const folga = 700;
+      const quando = Date.now() + (SALA.offsetRelogio||0) + folga;
+      const temCont = (mMode.value!=='off' && state.offset<0.01);
+      const countSecComum = temCont ? metroCountSec() : 0;
+      salaEnviar({tipo:'play', quando:quando, pos:state.offset, countSec:countSecComum});
+      const esperar = Math.max(0, quando - (Date.now()+(SALA.offsetRelogio||0)) - 120);
+      const cs = temCont ? countSecComum : undefined;
+      setTimeout(()=>{ if(!state.playing) startPlayback(false, cs, quando); }, esperar);
     };
     // Com o "verde", o relogio ja fincou na entrada: normalmente toca direto.
     if(relogioFincado()){ tocar(); return; }
@@ -3013,7 +2931,6 @@
     }catch(e){ salaLog('erro ao montar pista recebida'); }
     delete SALA._recArq[msg.id];
     const acabou = Object.keys(SALA._recArq).length===0;
-    if(acabou){ ressincronizarRelogio('apos baixar pistas'); try{ salaEnviar({tipo:'resync', motivo:'download'}); }catch(e){} }
     mostrarProgressoArq(acabou);
   }
   function mostrarProgressoArq(concluiu){
@@ -3056,7 +2973,7 @@
     // uma vez para garantir a entrega. Protecao anti-eco: so retransmite comandos
     // de sala e nunca um comando ja marcado como retransmitido.
     if(origem && !msg._rt){
-      const retransmitir = ['play','pausa','stop','seek','metroPlay','metroStop','metroBpm','metroPlayPedido','pista','loop','metroConfig','resync','prontidao'];
+      const retransmitir = ['play','pausa','stop','seek','metroPlay','metroStop','metroBpm','metroPlayPedido','pista','loop','metroConfig'];
       if(retransmitir.indexOf(msg.tipo)>=0){
         const copia = Object.assign({}, msg, {_rt:1});   // marca como retransmitido
         const txt=JSON.stringify(copia);
@@ -3089,7 +3006,6 @@
       // QUALIDADE do relogio: o quanto as melhores amostras concordam (spread).
       // spread pequeno = relogio convergiu (fincado); grande = ainda oscilando.
       SALA._spread = (top.length>=2)? (top[top.length-1].offset - top[0].offset) : 999;
-      SALA._ultimaMedicao = Date.now();   // medicao FRESCA (para o verde expirar se esfriar)
       atualizarProntidao();   // ETAPA 1: reflete o estado do relogio no indicador
       // suavizacao: move 60% em direcao ao novo valor (evita solavancos)
       if(SALA.offsetRelogio===0 || SALA._amostras.length<4) SALA.offsetRelogio = novoOffset;
@@ -3139,13 +3055,6 @@
     if(msg.tipo==='arqInicio'){ receberArqInicio(msg); return; }
     if(msg.tipo==='arqPedaco'){ receberArqPedaco(msg); return; }
     if(msg.tipo==='arqFim'){ receberArqFim(msg); return; }
-    if(msg.tipo==='resync'){ ressincronizarRelogio('sala pediu ('+(msg.motivo||'')+')'); return; }
-    if(msg.tipo==='prontidao'){
-      SALA._prontDosPares = SALA._prontDosPares || {};
-      if(msg.de){ SALA._prontDosPares[msg.de] = { est: msg.est, quando: Date.now() }; }
-      atualizarProntidao();
-      return;
-    }
     if(msg.tipo==='pedeArquivos'){ if(SALA.host) enviarPistasPara(origem); return; }
     if(msg.tipo==='estado'){ aplicarEstado(msg); return; }
     if(msg.tipo==='play'){
@@ -3153,16 +3062,14 @@
       state.offset = msg.pos||0;
       const cs = (msg.countSec!==undefined)? msg.countSec : undefined;
       const quandoSala = msg.quando;   // instante comum (no relogio da sala)
-      // Garante o AudioContext QUENTE antes de agendar (senao o 1o play pega um
-      // currentTime instavel e desfinca - a causa do "finca so na 2a/3a vez").
-      ctxPronto().then(()=>{
-        const agora = Date.now() + (SALA.offsetRelogio||0);
-        const esperar = Math.max(0, quandoSala - agora - 120);
-        setTimeout(()=>{
-          if(!state.playing && state.tracks.length){ startPlayback(false, cs, quandoSala); }
-          SALA.aplicando=false;
-        }, esperar);
-      });
+      // com o relogio fincado na ENTRADA, o offset ja esta certo aqui: agenda o
+      // audio ancorado no instante comum (o WebAudio finca no ponto exato).
+      const agora = Date.now() + (SALA.offsetRelogio||0);
+      const esperar = Math.max(0, quandoSala - agora - 120);
+      setTimeout(()=>{
+        if(!state.playing && state.tracks.length){ startPlayback(false, cs, quandoSala); }
+        SALA.aplicando=false;
+      }, esperar);
       return;
     }
     if(msg.tipo==='pausa'){
@@ -3246,7 +3153,6 @@
     if(SALA.conns.indexOf(conn)<0) SALA.conns.push(conn);
 
     function aoAbrir(){
-      SALA._jaConectou = true;   // a sala existe de fato (nao e 'nao encontrada')
       salaLog('conexao ABERTA com '+(conn.peer||'par'));
       // MALHA: registra este par e conta a todos quem esta na sala, para todos
       // se conectarem entre si. Assim ninguem depende so do anfitriao.
@@ -3349,7 +3255,6 @@
       $('salaLink').value=url;
       $('salaAcoes').classList.add('hidden');
       $('salaConectada').classList.remove('hidden');
-      iniciarVigiaSala();
       atualizarProntidao();
       atualizarPeers();
     });
@@ -3374,7 +3279,6 @@
     SALA.host=false;
     SALA._salaAlvo = idSala;          // guarda o alvo para reconectar se cair
     SALA._saiuDeProposito = false;    // so true quando o usuario clica em "Sair"
-    SALA._jaConectou = false;         // vira true so quando conectar de fato
     SALA.peer=new Peer({ config: CONFIG_ICE });
     salaMsg('entrando...', true);
     SALA.peer.on('open', (meuId)=>{
@@ -3393,7 +3297,6 @@
       $('salaLink').value=url;
       $('salaAcoes').classList.add('hidden');
       $('salaConectada').classList.remove('hidden');
-      iniciarVigiaSala();
       atualizarProntidao();
     });
     // MALHA: o convidado tambem aceita conexoes de OUTROS convidados.
@@ -3409,15 +3312,7 @@
     SALA.peer.on('error', e=>{
       const tipo=(e&&e.type)||'?';
       salaLog('ERRO peer: '+tipo);
-      // 'peer-unavailable' na entrada = a sala nao existe (anfitriao nao esta la).
-      // NAO e reconexao: avisa e para. So reconecta quedas de rede se JA conectou.
-      if(tipo==='peer-unavailable' && !SALA._jaConectou){
-        salaMsg('sala não encontrada', false);
-        salaLog('essa sala nao existe ou o anfitriao saiu');
-        alert('Sala não encontrada. Confira o código ou peça um novo link ao anfitrião.');
-        return;
-      }
-      // erros de rede: reconecta (sem exigir jaConectou, para cobrir quedas na entrada).
+      // erros recuperaveis: tenta reconectar em vez de desistir.
       if(!SALA._saiuDeProposito && (tipo==='network' || tipo==='disconnected' || tipo==='peer-unavailable' || tipo==='server-error')){
         salaMsg('reconectando...', true);
         tentarReconectar();
@@ -3432,7 +3327,6 @@
     if(SALA._saiuDeProposito || !SALA._salaAlvo) return;
     if(SALA._reconectando) return;    // ja esta tentando
     SALA._reconectando = true;
-    try{ const s=$('salaStatus'); if(s){ s.classList.remove('medindo','quase','pronta'); s.classList.add('reconectando'); s.textContent='reconectando'; } }catch(e){}
     let tentativa = 0;
     const tenta = ()=>{
       if(SALA._saiuDeProposito){ SALA._reconectando=false; return; }
@@ -3452,15 +3346,11 @@
         }
       }catch(e){ salaLog('falha na reconexao: '+e.message); }
       // agenda proxima tentativa se ainda nao voltou (ate ~10 tentativas)
-      // RECONEXAO ETERNA: nunca desiste sozinha. So para se o usuario clicar em
-      // "Sair". O intervalo cresce ate um teto de ~5s (nao martela a rede), mas
-      // segue tentando para sempre - a sala so cai se o usuario sair ou o aparelho
-      // desligar. O aviso discreto "reconectando" fica visivel enquanto isso.
-      if(!SALA._saiuDeProposito){
+      if(tentativa<10 && !SALA._saiuDeProposito){
         setTimeout(()=>{
-          if((SALA.peer && SALA.peer.disconnected && !SALA.peer.destroyed) || !SALA.peer || (SALA.peer && SALA.peer.destroyed)){ tenta(); }
-          else { SALA._reconectando=false; salaLog('reconectado.'); try{ const s=$('salaStatus'); if(s) s.classList.remove('reconectando'); }catch(e){} salaMsg('na sala', true); atualizarProntidao(); }
-        }, Math.min(800*tentativa, 5000));
+          if(SALA.peer && SALA.peer.disconnected && !SALA.peer.destroyed){ tenta(); }
+          else { SALA._reconectando=false; salaLog('reconectado.'); salaMsg('na sala', true); }
+        }, Math.min(500*tentativa, 3000));
       } else { SALA._reconectando=false; }
     };
     tenta();
@@ -3473,7 +3363,6 @@
     try{ SALA.conns.forEach(c=>{ try{ if(c._pingCont) clearInterval(c._pingCont); }catch(e){} c.close(); }); }catch(e){}
     try{ SALA.peer && SALA.peer.destroy(); }catch(e){}
     SALA.peer=null; SALA.conns=[]; SALA.ligada=false; SALA.host=false;
-    pararVigiaSala();
     try{ const s=$('salaStatus'); if(s) s.classList.remove('medindo','quase','pronta'); }catch(e){}
     salaMsg('desligada', false);
     $('salaAcoes').classList.remove('hidden');
@@ -3920,17 +3809,12 @@
     if(typeof SALA!=='undefined'){ SALA._marcarVivo = ()=>{ ultimoPong = Date.now(); }; }
 
     function reafinar(){
-      aquecerCtx();   // acorda o audio JA (evita currentTime frio ao voltar)
+      try{ if(state.ctx && state.ctx.state==='suspended') state.ctx.resume(); }catch(e){}
       try{
         if(typeof SALA==='undefined' || !SALA.ligada || !SALA.conns || !SALA.conns.length) return;
 
         const foraMs = saiuEm ? (Date.now()-saiuEm) : 0;
         salaLog('voltou (fora '+Math.round(foraMs/1000)+'s): checando a sala...');
-
-        // ao voltar, relogio/contexto podem ter derivado: re-sincroniza do zero
-        // (derruba o indicador para "sincronizando" e refina ate o verde de novo).
-        if(!SALA.host){ ressincronizarRelogio('voltou do 2o plano/ocioso'); }
-        try{ salaEnviar({tipo:'resync', motivo:'retomada'}); }catch(e){}
 
         // 1) Se o peer perdeu o servidor de sinalizacao, reconecta JA.
         if(SALA.peer && SALA.peer.disconnected && !SALA._saiuDeProposito){
