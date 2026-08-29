@@ -592,7 +592,7 @@
   <p class="empty-note" id="emptyNote">Dica: se sua música ainda está num arquivo único, separe as pistas gratuitamente com o <a href="#" id="lnkBaixarCaderno" title="Baixa o caderno Orivox_Separador_de_Pistas.ipynb direto daqui">caderno Orivox Separador</a> (rode no <a href="https://colab.research.google.com/" target="_blank" rel="noopener">Google Colab</a>) ou com o programa <a href="https://ultimatevocalremover.com/" target="_blank" rel="noopener">UVR</a>, e importe os resultados aqui.</p>
 
   <footer>
-    <span class="fm">Orivox</span> · v2.3 · Desenvolvido por Raphael Silveira</footer>
+    <span class="fm">Orivox</span> · v2.4 · Desenvolvido por Raphael Silveira</footer>
 </div>
 
 <div class="sobre-overlay" id="boasVindasOverlay" role="dialog" aria-modal="true" aria-labelledby="boasVindasTitulo">
@@ -1458,7 +1458,7 @@
   }
 
   const TAPM={times:[]};
-  mBpm.addEventListener('change', ()=>{ METRO.travado=true; if($('mAutoInfo')) $('mAutoInfo').textContent='BPM fixado manualmente em '+mBpm.value+'. A detecção automática não vai sobrescrever.'; if(typeof window.__salaMetroConfig==='function') window.__salaMetroConfig(); });
+  mBpm.addEventListener('change', ()=>{ METRO.travado=true; METRO.travadoManual=true; if($('mAutoInfo')) $('mAutoInfo').textContent='BPM fixado manualmente em '+mBpm.value+'. A detecção automática não vai sobrescrever.'; if(typeof window.__salaMetroConfig==='function') window.__salaMetroConfig(); });
   mTap.addEventListener('click', ()=>{
     const now=performance.now();
     if(TAPM.times.length && now-TAPM.times[TAPM.times.length-1]>2500) TAPM.times=[];
@@ -1632,10 +1632,16 @@
       pan:0,
       node:null, gain:null, analyser:null, panner:null, peaks:null, el:{}
     };
+    const eraVazio = (state.tracks.length===0);   // esta e a 1a pista? (musica nova)
     state.tracks.push(t);
     state.duration = Math.max(...state.tracks.map(x=>x.buffer.duration));
     t.__added=true;
     buildStrip(t);
+    // MUSICA NOVA: se comecamos do zero e o BPM so estava travado por vir da SALA
+    // (nao fixado manualmente pelo usuario), libera para detectar a musica nova.
+    if(eraVazio && METRO._travadoPelaSala && !METRO.travadoManual){
+      METRO.travado=false; METRO._travadoPelaSala=false;
+    }
     agendarAnaliseTempo();
     return t;
   }
@@ -1684,6 +1690,11 @@
       METRO.beats=r.beats; METRO.strengths=r.strengths; METRO.lows=r.lows||r.strengths; METRO.down={};
       mBpm.value=r.bpm;
       mPhase.value=r.firstBeat;
+      // MUSICA NOVA na sala: compartilha o BPM recem-detectado para substituir o
+      // antigo em todos (so se nao foi o usuario que fixou o BPM na mao).
+      if(typeof SALA!=='undefined' && SALA.ligada && !METRO.travadoManual && typeof window.__salaMetroConfig==='function'){
+        window.__salaMetroConfig();
+      }
       METRO.detected=true;
       if(info){
         const fonte = nP>1? ' ('+nP+' pistas somadas)':'';
@@ -3125,7 +3136,7 @@
     if(msg.tipo==='metroConfig'){
       SALA.aplicando=true;
       if(msg.modo!==undefined) mMode.value=msg.modo;
-      if(msg.bpm!==undefined){ mBpm.value=msg.bpm; METRO.travado=true; }
+      if(msg.bpm!==undefined){ mBpm.value=msg.bpm; METRO.travado=true; METRO._travadoPelaSala=true; }
       if(msg.meter!==undefined){ mMeter.value=msg.meter; METRO.down={}; }
       if(msg.count!==undefined && $('mCount')) $('mCount').value=msg.count;
       if(msg.countStyle!==undefined && $('mCountStyle')) $('mCountStyle').value=msg.countStyle;
