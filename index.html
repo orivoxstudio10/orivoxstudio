@@ -592,7 +592,7 @@
   <p class="empty-note" id="emptyNote">Dica: se sua música ainda está num arquivo único, separe as pistas gratuitamente com o <a href="#" id="lnkBaixarCaderno" title="Baixa o caderno Orivox_Separador_de_Pistas.ipynb direto daqui">caderno Orivox Separador</a> (rode no <a href="https://colab.research.google.com/" target="_blank" rel="noopener">Google Colab</a>) ou com o programa <a href="https://ultimatevocalremover.com/" target="_blank" rel="noopener">UVR</a>, e importe os resultados aqui.</p>
 
   <footer>
-    <span class="fm">Orivox</span> · v1.9 · Desenvolvido por Raphael Silveira</footer>
+    <span class="fm">Orivox</span> · v2.2 · Desenvolvido por Raphael Silveira</footer>
 </div>
 
 <div class="sobre-overlay" id="boasVindasOverlay" role="dialog" aria-modal="true" aria-labelledby="boasVindasTitulo">
@@ -2694,6 +2694,23 @@
       salaLog('conectando ao par '+peerId+' (malha)');
     }catch(e){ salaLog('falha ao conectar em '+peerId); }
   }
+
+  // REGRA-MESTRA (resiliencia): tenta reacolher pares que cairam (ex: adormeceram
+  // no 2o plano). Tenta reconectar a cada 3s, PARA SEMPRE, ate o par voltar ou o
+  // usuario sair. Um par que volta e reconectado sozinho, sem ninguem fazer nada.
+  function reacolherPares(){
+    if(SALA._reacolhendo) return;   // ja rodando
+    SALA._reacolhendo = setInterval(()=>{
+      if(SALA._saiuDeProposito || !SALA.ligada){ clearInterval(SALA._reacolhendo); SALA._reacolhendo=null; return; }
+      const perdidos = SALA._paresPerdidos || {};
+      const ids = Object.keys(perdidos);
+      if(!ids.length){ clearInterval(SALA._reacolhendo); SALA._reacolhendo=null; return; }
+      ids.forEach(pid=>{
+        if(SALA.conns.some(c=>c.peer===pid)){ delete perdidos[pid]; return; }  // voltou
+        conectarAoPeer(pid);   // tenta reconectar (silencioso)
+      });
+    }, 3000);
+  }
   // avisa todos os meus pares sobre a lista de quem esta na sala, para todos
   // se conectarem entre si (formar a malha).
   function anunciarPeers(){
@@ -3154,6 +3171,7 @@
 
     function aoAbrir(){
       salaLog('conexao ABERTA com '+(conn.peer||'par'));
+      if(conn.peer && SALA._paresPerdidos){ delete SALA._paresPerdidos[conn.peer]; }  // voltou
       // MALHA: registra este par e conta a todos quem esta na sala, para todos
       // se conectarem entre si. Assim ninguem depende so do anfitriao.
       if(conn.peer){ SALA.peersConhecidos[conn.peer]=true; }
@@ -3191,6 +3209,14 @@
     conn.on('close', ()=>{
       try{ if(conn._pingCont) clearInterval(conn._pingCont); }catch(e){}
       SALA.conns=SALA.conns.filter(c=>c!==conn);
+      // NAO esquece o par: guarda o peerId para tentar reacolhe-lo (ele pode so
+      // ter adormecido no 2o plano). A sala so o solta se o usuario sair.
+      if(conn.peer && !SALA._saiuDeProposito){
+        SALA._paresPerdidos = SALA._paresPerdidos || {};
+        SALA._paresPerdidos[conn.peer] = true;
+        salaLog('par '+conn.peer+' saiu; vou tentar reacolher.');
+        reacolherPares();
+      }
       // se a ANCORA do relogio caiu, elege uma nova (o menor peerId restante):
       if(conn.peer && conn.peer===SALA.ancora){
         const vivos = SALA.conns.map(c=>c.peer).filter(Boolean);
@@ -3345,12 +3371,14 @@
           return;   // entrarSala reinicia o fluxo
         }
       }catch(e){ salaLog('falha na reconexao: '+e.message); }
-      // agenda proxima tentativa se ainda nao voltou (ate ~10 tentativas)
-      if(tentativa<10 && !SALA._saiuDeProposito){
+      // RECONEXAO ETERNA E PACIENTE: nunca desiste (so se o usuario sair). O
+      // intervalo cresce ate um teto de 5s para nao martelar a rede/bateria, mas
+      // segue tentando indefinidamente. A sala so acaba por escolha do usuario.
+      if(!SALA._saiuDeProposito){
         setTimeout(()=>{
-          if(SALA.peer && SALA.peer.disconnected && !SALA.peer.destroyed){ tenta(); }
+          if((SALA.peer && SALA.peer.disconnected && !SALA.peer.destroyed) || !SALA.peer || (SALA.peer && SALA.peer.destroyed)){ tenta(); }
           else { SALA._reconectando=false; salaLog('reconectado.'); salaMsg('na sala', true); }
-        }, Math.min(500*tentativa, 3000));
+        }, Math.min(800*tentativa, 5000));
       } else { SALA._reconectando=false; }
     };
     tenta();
@@ -3358,6 +3386,8 @@
 
   function sairSala(){
     SALA._saiuDeProposito = true;      // impede a reconexao automatica
+    try{ if(SALA._reacolhendo){ clearInterval(SALA._reacolhendo); SALA._reacolhendo=null; } }catch(e){}
+    SALA._paresPerdidos = {};
     SALA._reconectando = false;
     SALA._salaAlvo = null;
     try{ SALA.conns.forEach(c=>{ try{ if(c._pingCont) clearInterval(c._pingCont); }catch(e){} c.close(); }); }catch(e){}
@@ -3817,34 +3847,28 @@
         salaLog('voltou (fora '+Math.round(foraMs/1000)+'s): checando a sala...');
 
         // 1) Se o peer perdeu o servidor de sinalizacao, reconecta JA.
+        // REGRA-MESTRA: sala calma e resiliente. Ao voltar do 2o plano, NAO
+        // desconectamos nada nem reconectamos em panico. Assumimos que todos
+        // continuam na sala. So agimos se o peer JA estiver comprovadamente caido -
+        // e, mesmo assim, so RECONECTANDO (nunca derrubando de proposito).
         if(SALA.peer && SALA.peer.disconnected && !SALA._saiuDeProposito){
+          // o proprio PeerJS perdeu o servidor de sinalizacao: reconecta suave,
+          // sem derrubar as conexoes de dados existentes (elas podem estar vivas).
+          salaLog('servidor de sinalizacao caiu: reconectando com calma...');
           tentarReconectar();
         }
 
-        // 2) Reafina o relogio com uma rajada de pings, e pede o estado atual.
+        // Reafina o relogio suavemente (mantem o fincado), sem prova de vida
+        // agressiva. Se as conexoes estiverem vivas, isso re-sincroniza; se alguma
+        // caiu, o PeerJS/onclose cuidam de reconectar no seu tempo - nada aqui
+        // derruba a sala. Pedimos tambem o estado atual para nos realinharmos.
         let n=0;
         const rajada=setInterval(()=>{
-          if(n++>=8){ clearInterval(rajada); return; }
+          if(n++>=8 || SALA._saiuDeProposito){ clearInterval(rajada); return; }
           SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){} });
-        }, 120);
+        }, 150);
         SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'pedeEstado'})); }catch(e){} });
-
-        // 3) PROVA DE VIDA: manda um ping agora e ve se ALGUEM responde em 1,2s.
-        //    Se ninguem responder, as conexoes morreram no 2o plano: reconecta JA
-        //    (nao fica esperando indefinidamente = fim da demora).
-        const antes = ultimoPong;
-        SALA.conns.forEach(cn=>{ try{ cn.send(JSON.stringify({tipo:'ping', t0:Date.now(), de:SALA.meuId})); }catch(e){} });
-        setTimeout(()=>{
-          const ouviu = (ultimoPong > antes);
-          if(!ouviu && !SALA._saiuDeProposito){
-            salaLog('sala nao respondeu: reconectando JA...');
-            // forca a reconexao recriando o peer se preciso.
-            if(SALA.peer && !SALA.peer.destroyed){ try{ SALA.peer.disconnect(); }catch(e){} }
-            tentarReconectar();
-          } else if(ouviu){
-            salaLog('sala respondeu: sincronizada.');
-          }
-        }, 1200);
+        salaLog('voltou: reafinando o relogio (sala mantida).');
 
         saiuEm = 0;
       }catch(e){}
