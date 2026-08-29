@@ -395,7 +395,7 @@
         <button class="btn btn-ghost btn-sm" id="salaSair">Sair da sala</button>
       </div>
       <div class="sala-linha">
-        <button class="btn btn-ghost btn-sm" id="salaPedirArq" style="width:100%">Baixar as pistas do anfitrião (se você não as tem)</button>
+        <button class="btn btn-ghost btn-sm" id="salaPedirArq" style="width:100%">Baixar as pistas da sala (de quem as tiver)</button>
       </div>
       <div class="sala-linha">
         <button class="btn btn-ghost btn-sm" id="salaMic" style="width:100%" aria-pressed="false">🎤 Falar com a sala</button>
@@ -592,7 +592,7 @@
   <p class="empty-note" id="emptyNote">Dica: se sua música ainda está num arquivo único, separe as pistas gratuitamente com o <a href="#" id="lnkBaixarCaderno" title="Baixa o caderno Orivox_Separador_de_Pistas.ipynb direto daqui">caderno Orivox Separador</a> (rode no <a href="https://colab.research.google.com/" target="_blank" rel="noopener">Google Colab</a>) ou com o programa <a href="https://ultimatevocalremover.com/" target="_blank" rel="noopener">UVR</a>, e importe os resultados aqui.</p>
 
   <footer>
-    <span class="fm">Orivox</span> · v2.2 · Desenvolvido por Raphael Silveira</footer>
+    <span class="fm">Orivox</span> · v2.3 · Desenvolvido por Raphael Silveira</footer>
 </div>
 
 <div class="sobre-overlay" id="boasVindasOverlay" role="dialog" aria-modal="true" aria-labelledby="boasVindasTitulo">
@@ -2949,6 +2949,7 @@
     delete SALA._recArq[msg.id];
     const acabou = Object.keys(SALA._recArq).length===0;
     mostrarProgressoArq(acabou);
+    if(acabou){ SALA._baixando=false; SALA._fonteEscolhida=null; }
   }
   function mostrarProgressoArq(concluiu){
     const ids=Object.keys(SALA._recArq);
@@ -3072,7 +3073,30 @@
     if(msg.tipo==='arqInicio'){ receberArqInicio(msg); return; }
     if(msg.tipo==='arqPedaco'){ receberArqPedaco(msg); return; }
     if(msg.tipo==='arqFim'){ receberArqFim(msg); return; }
-    if(msg.tipo==='pedeArquivos'){ if(SALA.host) enviarPistasPara(origem); return; }
+    if(msg.tipo==='pedeArquivos'){
+      // AUTONOMIA IGUALITARIA: qualquer um que tenha pistas responde - mas primeiro
+      // so AVISA que tem (rapido), para quem pediu escolher UMA fonte e evitar
+      // download duplicado quando varios tem as pistas.
+      const tenhoPistas = state.tracks.some(t=>t.bytes);
+      if(tenhoPistas){ try{ origem.send(JSON.stringify({tipo:'tenhoPistas', de:SALA.meuId, n:state.tracks.filter(t=>t.bytes).length})); }catch(e){} }
+      return;
+    }
+    if(msg.tipo==='tenhoPistas'){
+      // recebi uma oferta de fonte. Se ainda nao escolhi ninguem, escolho ESTA
+      // (a primeira que respondeu) e peco as pistas so a ela.
+      if(SALA._baixando && !SALA._fonteEscolhida){
+        SALA._fonteEscolhida = msg.de;
+        salaLog('baixando de '+msg.de+' ('+(msg.n||'?')+' pista(s))');
+        try{ origem.send(JSON.stringify({tipo:'mandaPistas'})); }catch(e){}
+      }
+      return;
+    }
+    if(msg.tipo==='mandaPistas'){
+      // fui a fonte escolhida: envio as pistas de fato.
+      const tenhoPistas = state.tracks.some(t=>t.bytes);
+      if(tenhoPistas) enviarPistasPara(origem);
+      return;
+    }
     if(msg.tipo==='estado'){ aplicarEstado(msg); return; }
     if(msg.tipo==='play'){
       SALA.aplicando=true;
@@ -3749,9 +3773,17 @@
     if(mic) mic.addEventListener('click', ()=>{ SALA._mic.ligado? desligarMic() : ligarMic(); });
     const pedirArq=$('salaPedirArq');
     if(pedirArq) pedirArq.addEventListener('click', ()=>{
-      if(SALA.host){ salaLog('voce e o anfitriao (ja tem as pistas)'); return; }
-      salaLog('pedindo as pistas ao anfitriao...');
+      // AUTONOMIA IGUALITARIA: qualquer um pede as pistas a sala. Quem tiver
+      // (seja anfitriao ou nao) responde. Assim da para trocar de musica: alguem
+      // importa a nova e os outros baixam dela.
+      const jaTenho = state.tracks.some(t=>t.bytes);
+      if(jaTenho && !confirm('Voce ja tem pistas carregadas. Baixar as da sala vai substituir/adicionar. Continuar?')){ return; }
+      salaLog('pedindo as pistas a sala (de quem tiver)...');
+      SALA._baixando = true;            // estou aguardando ofertas de fonte
+      SALA._fonteEscolhida = null;      // ainda nao escolhi de quem baixar
       SALA.conns.forEach(cn=>{ try{ if(cn.open) cn.send(JSON.stringify({tipo:'pedeArquivos'})); }catch(e){} });
+      // se ninguem responder em 8s, encerra a espera (evita ficar preso).
+      setTimeout(()=>{ if(SALA._baixando && !SALA._fonteEscolhida){ SALA._baixando=false; salaLog('ninguem na sala tem pistas para enviar'); } }, 8000);
     });
 
     // Se abriu por um link ?sala=XYZ: NAO entra sozinho (o audio ficaria travado
